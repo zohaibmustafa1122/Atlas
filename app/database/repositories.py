@@ -128,6 +128,9 @@ class EntityRepository:
     def list_persons(self, dataset_id: str) -> list[Person]:
         return list(self.session.query(Person).filter(Person.dataset_id == dataset_id).all())
 
+    def list_transactions(self, dataset_id: str) -> list[Transaction]:
+        return list(self.session.query(Transaction).filter(Transaction.dataset_id == dataset_id).all())
+
     def list_events(self, dataset_id: str) -> list[Event]:
         return list(self.session.query(Event).filter(Event.dataset_id == dataset_id).all())
 

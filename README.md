@@ -4,10 +4,10 @@
 > heterogeneous datasets through entity resolution, graph analytics, and
 > anomaly detection. Built as a BS Data Science Final Year Project.
 
-**Status: Phase 4 — project setup, database, synthetic data generator,
+**Status: Phase 5 — project setup, database, synthetic data generator,
 CSV/JSON/XLSX ingestion, cleaning/validation, Data Quality Engine, graph
 construction & analytics, Graph Explorer, Timeline, Map, entity
-resolution, Streamlit dashboard.**
+resolution, anomaly detection, Streamlit dashboard.**
 
 ---
 
@@ -43,7 +43,7 @@ resource-efficient approach holds up and where it doesn't).
 | **2 (done)** | Data Quality Engine (completeness/uniqueness/validity/consistency), cleaning (whitespace, exact duplicates), schema validation |
 | **3 (done)** | Graph construction (NetworkX), degree/PageRank/betweenness centrality, connected components, community detection, shortest path, Graph Explorer (search + bounded expand + Pyvis viz), Timeline, Map |
 | **4 (done)** | Entity resolution: blocking, baseline (Levenshtein) vs multi-feature (Levenshtein + token Jaccard + TF-IDF cosine) fuzzy matching, confidence-labeled results, precision/recall/F1 against injected ground truth |
-| 5 | Anomaly detection (Isolation Forest + statistical baselines) |
+| **5 (done)** | Anomaly detection: statistical (robust z-score via median/MAD) vs Isolation Forest on transaction amounts, "potential anomaly" language (never "fraud"), precision/recall/F1 against injected ground truth, persisted to `analysis_runs`/`anomalies` |
 | 6 | NLP entity extraction from free text |
 | 7 | Retrieval-grounded AI assistant (fact / inference / uncertainty) |
 | 8 | Research evaluation: precision/recall/F1, performance benchmarks |
@@ -61,7 +61,7 @@ CPU-only ML).
 - **Backend:** Python, FastAPI, Pydantic, SQLAlchemy
 - **Database:** SQLite (dev) → PostgreSQL (future, same ORM code)
 - **Data processing:** Pandas (Polars planned for hot paths)
-- **ML:** scikit-learn (TF-IDF/cosine similarity for entity resolution; Isolation Forest, Phase 5)
+- **ML:** scikit-learn (TF-IDF/cosine similarity for entity resolution; Isolation Forest for anomaly detection)
 - **Graph:** NetworkX, Neo4j-compatible interface for the future
 - **Visualization:** Streamlit, Plotly, Pyvis
 - **Testing:** Pytest
@@ -149,6 +149,10 @@ In the dashboard:
   cosine) scoring, adjust the similarity threshold, and see confidence-labeled results.
   For the synthetic dataset (which has known injected duplicates), also see a live
   precision/recall/F1 comparison between the two methods.
+- **Anomalies** → detect statistically unusual transaction amounts with a statistical
+  (robust z-score) or Isolation Forest method, tune the sensitivity, and see confidence
+  scores and reasons (always "potential anomaly," never "fraud"). For the synthetic
+  dataset, see a live precision/recall/F1 comparison between the two methods.
 
 **4. Run the tests:**
 
@@ -194,7 +198,7 @@ Planned experiments (baseline vs. improved method, at 1,000 / 10,000 /
 - Performance: processing time, memory consumption, graph construction
   time, query response time.
 
-## 11. Limitations (current, Phase 4)
+## 11. Limitations (current, Phase 5)
 
 - The Data Quality Engine's "validity" and "consistency" checks are
   heuristics (see `docs/defense_questions.md`), not schema-verified —
@@ -219,7 +223,15 @@ Planned experiments (baseline vs. improved method, at 1,000 / 10,000 /
   methods produce many false positives; the multi-feature method's
   advantage over the baseline is clearest at a stricter threshold (see
   `docs/defense_questions.md` for measured precision/recall/F1 at both).
-- No anomaly detection, NLP, or AI assistant yet — those are Phases 5–7.
+- Anomaly detection only looks at transaction amount; it does not yet use
+  graph structure (e.g. sender/receiver degree) or timing features, so it
+  can only catch univariate amount outliers, not multivariate anomalies
+  like "unremarkable amount, unusual pair of entities." A measured
+  finding worth knowing: on the synthetic dataset, the simple statistical
+  baseline actually outperforms Isolation Forest (F1 1.0 vs 0.75), because
+  the injected anomalies are pure single-feature extremes — see
+  `docs/defense_questions.md` for why that isn't a bug.
+- No NLP or AI assistant yet — those are Phases 6–7.
 - Relationship/transaction referential integrity is enforced in the
   repository layer, not at the database schema level (documented
   trade-off, see `docs/database.md`).

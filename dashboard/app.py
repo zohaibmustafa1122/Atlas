@@ -14,15 +14,20 @@ Implemented so far, per the project roadmap (docs/architecture.md):
     confidence-labeled, never claiming certainty), with a baseline-vs-
     multi-feature precision/recall/F1 comparison against injected ground
     truth when available (Phase 4).
+  - Anomalies: statistical vs Isolation Forest outlier detection on
+    transaction amounts, labeled "potential anomaly" (never "fraud"), with
+    the same baseline-vs-improved evaluation against injected ground truth
+    (Phase 5).
 
-Later phases add: anomaly detection, NLP, and the AI assistant. Their nav
-entries are shown below as placeholders so the intended final navigation
-structure is visible from early on.
+Later phases add: NLP and the AI assistant. Their nav entries are shown
+below as placeholders so the intended final navigation structure is
+visible from early on.
 """
 
 import re
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -35,7 +40,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.core.config import get_settings  # noqa: E402
 from app.database.database import get_session, init_db  # noqa: E402
-from app.database.models import AnalysisRun, DataSource, Dataset  # noqa: E402
+from app.database.models import AnalysisRun, Anomaly, DataSource, Dataset  # noqa: E402
 from app.database.repositories import AnalysisRepository, DatasetRepository, EntityRepository  # noqa: E402
 from app.graph.analytics import compute_graph_metrics, detect_communities, find_shortest_path  # noqa: E402
 from app.graph.builder import build_graph_for_dataset  # noqa: E402
@@ -44,8 +49,18 @@ from app.graph.visualize import render_graph_html  # noqa: E402
 from app.ingestion.csv_loader import load_csv, summarize_dataframe  # noqa: E402
 from app.ingestion.excel_loader import load_excel  # noqa: E402
 from app.ingestion.json_loader import load_json  # noqa: E402
+from app.ml.anomaly_detection import (  # noqa: E402
+    detect_anomalies_isolation_forest,
+    detect_anomalies_statistical,
+    evaluate_against_ground_truth as evaluate_anomalies_against_ground_truth,
+    load_ground_truth_anomaly_ids,
+)
 from app.processing.cleaning import clean_dataframe  # noqa: E402
-from app.processing.entity_resolution import evaluate_against_ground_truth, load_ground_truth_pairs, resolve_entities  # noqa: E402
+from app.processing.entity_resolution import (  # noqa: E402
+    evaluate_against_ground_truth as evaluate_entity_resolution_against_ground_truth,
+    load_ground_truth_pairs,
+    resolve_entities,
+)
 from app.processing.loading import load_synthetic_dataset  # noqa: E402
 from app.processing.quality import compute_quality_score  # noqa: E402
 from app.processing.validation import validate_schema  # noqa: E402
@@ -64,9 +79,9 @@ IMPLEMENTED_PAGES = [
     "Timeline",
     "Map",
     "Entity Resolution",
+    "Anomalies",
 ]
 FUTURE_PAGES = [
-    "Anomalies (Phase 5)",
     "AI Assistant (Phase 7)",
 ]
 
@@ -304,7 +319,7 @@ def page_graph_explorer() -> None:
                 AnalysisRun(dataset_id=dataset.dataset_id, run_type="graph_metrics")
             )
             metrics = compute_graph_metrics(graph)
-            analysis_repo.complete_run(run, finished_at=run.started_at)
+            analysis_repo.complete_run(run, finished_at=datetime.utcnow())
         st.session_state["graph_metrics"] = metrics
 
     metrics = st.session_state.get("graph_metrics")
@@ -579,12 +594,12 @@ def page_entity_resolution() -> None:
                     "This dataset was synthetically generated with known duplicate identities "
                     "(see scripts/generate_data.py), so predictions can be scored directly."
                 )
-                current_eval = evaluate_against_ground_truth(candidates, ground_truth)
+                current_eval = evaluate_entity_resolution_against_ground_truth(candidates, ground_truth)
                 other_method = "baseline" if method == "multi_feature" else "multi_feature"
                 other_candidates = resolve_entities(
                     st.session_state["entity_resolution_persons"], method=other_method, threshold=threshold
                 )
-                other_eval = evaluate_against_ground_truth(other_candidates, ground_truth)
+                other_eval = evaluate_entity_resolution_against_ground_truth(other_candidates, ground_truth)
 
                 comparison_df = pd.DataFrame(
                     [
@@ -597,6 +612,135 @@ def page_entity_resolution() -> None:
                     f"True positives: {current_eval.true_positives}, "
                     f"false positives: {current_eval.false_positives}, "
                     f"false negatives: {current_eval.false_negatives} (for the selected method)."
+                )
+
+
+def page_anomalies() -> None:
+    st.title("Anomalies")
+    st.caption(
+        "Statistically unusual transaction amounts, flagged for human review. A high anomaly "
+        "score means \"this transaction looks unusual relative to the rest of this dataset\" -- "
+        "it is **not** evidence of fraud or wrongdoing on its own."
+    )
+
+    dataset = select_dataset()
+    if dataset is None:
+        return
+
+    with get_session() as session:
+        transactions = EntityRepository(session).list_transactions(dataset.dataset_id)
+
+    if not transactions:
+        st.info("This dataset has no transactions.")
+        return
+
+    st.caption(f"{len(transactions):,} transactions loaded.")
+    transaction_dicts = [
+        {
+            "transaction_id": t.transaction_id,
+            "source": t.source,
+            "destination": t.destination,
+            "amount": t.amount,
+            "timestamp": str(t.timestamp) if t.timestamp else None,
+        }
+        for t in transactions
+    ]
+
+    col1, col2 = st.columns(2)
+    with col1:
+        method = st.radio(
+            "Method",
+            options=["isolation_forest", "statistical"],
+            format_func=lambda m: "Isolation Forest" if m == "isolation_forest" else "Statistical (robust z-score)",
+        )
+    with col2:
+        if method == "statistical":
+            param = st.slider("Z-score threshold", min_value=1.5, max_value=5.0, value=3.0, step=0.5)
+        else:
+            param = st.slider("Expected outlier proportion (contamination)", min_value=0.001, max_value=0.05, value=0.01, step=0.001)
+
+    if st.button("Detect anomalies"):
+        with st.spinner("Scoring transactions..."):
+            if method == "statistical":
+                results = detect_anomalies_statistical(transaction_dicts, z_threshold=param)
+            else:
+                results = detect_anomalies_isolation_forest(transaction_dicts, contamination=param)
+
+        with get_session() as session:
+            analysis_repo = AnalysisRepository(session)
+            run = analysis_repo.create_run(
+                AnalysisRun(dataset_id=dataset.dataset_id, run_type=f"anomaly_detection:{method}")
+            )
+            analysis_repo.add_anomalies(
+                [
+                    Anomaly(
+                        run_id=run.run_id,
+                        entity_type="transaction",
+                        entity_id=r.transaction_id,
+                        anomaly_score=r.anomaly_score,
+                        reason=r.reason,
+                    )
+                    for r in results
+                ]
+            )
+            analysis_repo.complete_run(run, finished_at=datetime.utcnow())
+
+        st.session_state["anomaly_results"] = results
+        st.session_state["anomaly_transactions"] = transaction_dicts
+
+    results = st.session_state.get("anomaly_results")
+    if results is not None:
+        st.subheader(f"Potential anomalies ({len(results)})")
+        if results:
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "transaction_id": r.transaction_id,
+                            "source": r.source,
+                            "destination": r.destination,
+                            "amount": r.amount,
+                            "timestamp": r.timestamp,
+                            "anomaly_score": r.anomaly_score,
+                            "reason": r.reason,
+                        }
+                        for r in results
+                    ]
+                )
+            )
+        else:
+            st.caption("No anomalies found with the current settings.")
+
+        size_match = re.search(r"scale=(\d+)", dataset.description or "")
+        if size_match:
+            ground_truth = load_ground_truth_anomaly_ids(settings.synthetic_data_dir, int(size_match.group(1)))
+            if ground_truth:
+                st.markdown("---")
+                st.subheader("Evaluation against known ground truth")
+                st.caption(
+                    "This dataset was synthetically generated with known injected outlier "
+                    "transactions (see scripts/generate_data.py), so predictions can be scored directly."
+                )
+                current_eval = evaluate_anomalies_against_ground_truth(results, ground_truth)
+                other_method = "statistical" if method == "isolation_forest" else "isolation_forest"
+                other_results = (
+                    detect_anomalies_statistical(st.session_state["anomaly_transactions"])
+                    if other_method == "statistical"
+                    else detect_anomalies_isolation_forest(st.session_state["anomaly_transactions"])
+                )
+                other_eval = evaluate_anomalies_against_ground_truth(other_results, ground_truth)
+
+                comparison_df = pd.DataFrame(
+                    [
+                        {"method": method, "precision": current_eval.precision, "recall": current_eval.recall, "f1": current_eval.f1_score},
+                        {"method": other_method, "precision": other_eval.precision, "recall": other_eval.recall, "f1": other_eval.f1_score},
+                    ]
+                )
+                st.table(comparison_df)
+                st.caption(
+                    f"True positives: {current_eval.true_positives}, "
+                    f"false positives: {current_eval.false_positives}, "
+                    f"false negatives: {current_eval.false_negatives} (for the selected method, at its default parameter)."
                 )
 
 
@@ -639,6 +783,8 @@ def main() -> None:
         page_map()
     elif page == "Entity Resolution":
         page_entity_resolution()
+    elif page == "Anomalies":
+        page_anomalies()
 
 
 if __name__ == "__main__":

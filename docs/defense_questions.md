@@ -262,4 +262,65 @@ full study across multiple dataset sizes with proper experimental write-up.
 
 ---
 
-*(Further questions will be appended as Phases 5–9 are implemented.)*
+## Phase 5 questions
+
+**Q: Why does ATLAS only say "potential anomaly," never "fraud"?**
+A: An anomaly score is a statement about how unusual a transaction looks
+relative to the rest of the dataset -- it says nothing about intent, and
+plenty of statistically unusual transactions are entirely legitimate (a
+one-off large purchase, a rare but valid transfer). Calling something
+"fraud" would be a claim this system has no evidence to support. This
+mirrors the same "confidence, not certainty" principle behind entity
+resolution's "potential match" language in Phase 4.
+
+**Q: Why does the statistical method use median/MAD instead of mean/standard deviation?**
+A: The whole point of anomaly detection here is that the data being scored
+already contains the outliers being searched for. A handful of extreme
+values pulls the mean up and inflates the standard deviation enough that
+the z-score of the very outliers you're trying to catch can shrink below
+threshold -- the outliers mask themselves. The median and median absolute
+deviation (MAD) barely move when a few values are extreme, which is
+exactly the property ("robustness") needed here. The 1.4826 scaling
+constant is the standard value that makes MAD comparable to a standard
+deviation under a normal distribution, not something invented for this
+project.
+
+**Q: Your own results show the "baseline" statistical method (F1=1.0) actually beat Isolation Forest (F1=0.75) on the synthetic dataset -- doesn't that undercut the "multi-feature/improved method is better" narrative from Phase 4?**
+A: No -- it's a genuinely useful finding, and reporting it honestly is
+more defensible than hiding it. The synthetic generator injects outliers
+as pure amount extremes (one feature, no interaction effects), which is
+exactly the setting a univariate robust z-score is designed for.
+Isolation Forest is built to find outliers in multivariate feature spaces
+where no single feature alone reveals the anomaly (its advantage would
+show up if features like transaction frequency, time-of-day, or
+sender/receiver degree were added). At default contamination, it also
+flagged a handful of unusually *small* transactions as outliers, which
+technically are statistical outliers but weren't the injected anomalies
+-- a reminder that "contamination" is a rate you're asking the model to
+find, not a rate it discovers on its own. The lesson for Phase 8: which
+method wins depends on the anomaly's shape, and a fair comparison needs
+to say so rather than assume the more sophisticated method always wins.
+
+**Q: How would you extend this to catch more realistic (non-univariate) anomalies?**
+A: Add more features to the Isolation Forest input beyond raw amount --
+e.g. transaction frequency per sender, time since the sender's previous
+transaction, or the sender/receiver's graph degree from Phase 3. Isolation
+Forest's actual advantage over a simple z-score is multivariate
+interaction effects (e.g. "unremarkable amount, but this pair of entities
+has never transacted before and it's 3am"), which a single-feature
+z-score structurally cannot detect. That's a natural Phase 8 extension,
+not a Phase 5 requirement, since it needs its own injected ground truth to
+evaluate fairly.
+
+**Q: Why is `contamination` (Isolation Forest) exposed as a slider instead of a fixed value?**
+A: `contamination` tells the model what fraction of the data to treat as
+outliers -- it isn't learned, it's asserted. Fixing it silently would hide
+that this is a real, consequential choice: too low and real anomalies get
+missed, too high and normal transactions get flagged. Exposing it as a
+parameter (mirroring the entity resolution threshold slider in Phase 4)
+keeps that trade-off visible to whoever is using the tool, rather than
+baking in one number and hiding the trade-off it implies.
+
+---
+
+*(Further questions will be appended as Phases 6–9 are implemented.)*
