@@ -531,6 +531,28 @@ engines that never share a session factory. This is a small design
 decision but a deliberate one: reproducible research and an interactive
 demo have different lifecycles and shouldn't share mutable state.
 
+**Q: Graph metrics computation took ~13 minutes at 100,000 records despite the betweenness-sampling safeguard from Phase 3 -- doesn't that mean the safeguard failed?**
+A: No, but it revealed a subtler scaling issue than the sampling was
+designed for. Sampled betweenness caps the *number* of source nodes used
+(k=500, regardless of dataset size) -- that part worked as designed and
+is why betweenness at 100,000 records didn't take dramatically longer
+*per source* than expected. What sampling does NOT do is cap the cost of
+each individual source's computation: a single-source shortest-path
+traversal from one node still has to walk the whole graph, and that per-
+source cost grows with graph size (more nodes and edges to visit per
+traversal). So going from 12,689 nodes/28,378 edges (10,000-record scale,
+49.9s) to 126,691 nodes/283,616 edges (100,000-record scale, 795.5s) is
+roughly a 10x growth in graph size producing a 16x growth in time --
+worse than the sampling alone would predict, because the fixed *count* of
+samples doesn't offset their growing *individual* cost. This is reported
+as exactly what it is: the current sampling strategy caps one dimension
+of the cost, not both, and a further optimization (e.g. also reducing the
+BFS depth or working on a coarsened graph) is out of this project's scope
+but would be the natural next step. At this dataset size, running full
+graph analytics is a background/batch operation, not something to expect
+inline in an interactive session -- which is itself a legitimate, useful
+answer to the research question about resource-efficiency limits.
+
 ---
 
 *(Further questions will be appended as Phase 9 is implemented.)*
