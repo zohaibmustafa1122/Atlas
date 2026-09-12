@@ -24,6 +24,7 @@ from app.database.models import (
 )
 from app.database.repositories import DatasetRepository, EntityRepository
 from app.ingestion.csv_loader import summarize_dataframe
+from app.processing.quality import compute_quality_score
 
 
 def _parse_date(value: object) -> date | None:
@@ -68,6 +69,9 @@ def load_synthetic_dataset(
         for df in (persons_df, organizations_df, locations_df, events_df, relationships_df, transactions_df)
     )
     summary = summarize_dataframe(persons_df)
+    # persons_df is read with keep_default_na=False, so missing values are
+    # empty strings rather than NaN -- restore NaN before scoring quality.
+    quality_breakdown = compute_quality_score(persons_df.replace("", pd.NA))
 
     dataset = dataset_repo.create(
         Dataset(
@@ -77,6 +81,7 @@ def load_synthetic_dataset(
             column_count=len(persons_df.columns),
             missing_value_pct=summary.missing_value_pct,
             duplicate_row_pct=summary.duplicate_row_pct,
+            quality_score=quality_breakdown.overall_score,
         )
     )
     dataset_repo.add_source(

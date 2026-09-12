@@ -1,14 +1,15 @@
-"""ATLAS -- Streamlit dashboard (Phase 1 MVP).
+"""ATLAS -- Streamlit dashboard (Phase 1-2).
 
-Phase 1 scope, per the project roadmap (docs/architecture.md):
-  - Upload a CSV/JSON/XLSX file and see a dataset summary.
+Implemented so far, per the project roadmap (docs/architecture.md):
+  - Upload a CSV/JSON/XLSX file, see a dataset summary, clean it, and get a
+    Data Quality Score with a per-metric breakdown (Phase 2).
   - Generate/load the synthetic demo dataset into the database.
   - See a basic overview of what's stored.
 
-Later phases add: data quality scoring, entity resolution, graph
-exploration, timeline, map, anomaly detection, and the AI assistant. Their
-nav entries are shown below as placeholders so the intended final
-navigation structure is visible from Phase 1 onward.
+Later phases add: entity resolution, graph exploration, timeline, map,
+anomaly detection, and the AI assistant. Their nav entries are shown below
+as placeholders so the intended final navigation structure is visible from
+early on.
 """
 
 import sys
@@ -23,11 +24,15 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.core.config import get_settings  # noqa: E402
 from app.database.database import get_session, init_db  # noqa: E402
+from app.database.models import DataSource, Dataset  # noqa: E402
 from app.database.repositories import DatasetRepository, EntityRepository  # noqa: E402
 from app.ingestion.csv_loader import load_csv, summarize_dataframe  # noqa: E402
 from app.ingestion.excel_loader import load_excel  # noqa: E402
 from app.ingestion.json_loader import load_json  # noqa: E402
+from app.processing.cleaning import clean_dataframe  # noqa: E402
 from app.processing.loading import load_synthetic_dataset  # noqa: E402
+from app.processing.quality import compute_quality_score  # noqa: E402
+from app.processing.validation import validate_schema  # noqa: E402
 
 st.set_page_config(page_title="ATLAS", layout="wide", initial_sidebar_state="expanded")
 
@@ -36,7 +41,6 @@ init_db()
 
 IMPLEMENTED_PAGES = ["Overview", "Upload Dataset", "Load Synthetic Data", "Datasets"]
 FUTURE_PAGES = [
-    "Data Quality (Phase 2)",
     "Entity Explorer (Phase 4)",
     "Graph Explorer (Phase 3)",
     "Timeline (Phase 3)",
@@ -105,12 +109,28 @@ def page_overview() -> None:
                     "columns": d.column_count,
                     "missing_%": d.missing_value_pct,
                     "duplicate_%": d.duplicate_row_pct,
+                    "quality_score": d.quality_score,
                     "created_at": d.created_at,
                 }
                 for d in datasets
             ]
         )
     )
+
+
+def render_quality_score(df) -> None:
+    st.subheader("Data Quality Score")
+    breakdown = compute_quality_score(df)
+    st.metric("Overall score", f"{breakdown.overall_score:.0f} / 100")
+    score_cols = st.columns(4)
+    score_cols[0].metric("Completeness", f"{breakdown.completeness:.0f}%")
+    score_cols[1].metric("Uniqueness", f"{breakdown.uniqueness:.0f}%")
+    score_cols[2].metric("Validity", f"{breakdown.validity:.0f}%")
+    score_cols[3].metric("Consistency", f"{breakdown.consistency:.0f}%")
+    with st.expander("Why this score?"):
+        for line in breakdown.explanation:
+            st.write(f"- {line}")
+    return breakdown
 
 
 def page_upload() -> None:
@@ -141,6 +161,52 @@ def page_upload() -> None:
 
     st.success(f"Loaded **{uploaded_file.name}**")
     render_dataset_summary(summary, summary.preview)
+
+    st.markdown("---")
+    is_valid, issues, _ = validate_schema(df)
+    if issues:
+        st.warning("Validation issues:\n" + "\n".join(f"- {issue}" for issue in issues))
+    else:
+        st.success("Schema validation passed: dataset has rows and columns.")
+
+    cleaned_df, cleaning_report = clean_dataframe(df)
+    st.subheader("Cleaning")
+    clean_cols = st.columns(3)
+    clean_cols[0].metric("Duplicate rows removed", cleaning_report.duplicate_rows_removed)
+    clean_cols[1].metric("Whitespace-normalized cells", cleaning_report.whitespace_normalized_cells)
+    clean_cols[2].metric("Rows after cleaning", cleaning_report.cleaned_row_count)
+
+    st.markdown("---")
+    quality_breakdown = render_quality_score(cleaned_df)
+
+    st.markdown("---")
+    if st.button("Save cleaned dataset metadata"):
+        with get_session() as session:
+            dataset_repo = DatasetRepository(session)
+            cleaned_summary = summarize_dataframe(cleaned_df)
+            dataset = dataset_repo.create(
+                Dataset(
+                    name=uploaded_file.name,
+                    description="User-uploaded dataset, cleaned and scored by the Data Quality Engine.",
+                    row_count=cleaned_summary.row_count,
+                    column_count=cleaned_summary.column_count,
+                    missing_value_pct=cleaned_summary.missing_value_pct,
+                    duplicate_row_pct=cleaned_summary.duplicate_row_pct,
+                    quality_score=quality_breakdown.overall_score,
+                )
+            )
+            dataset_repo.add_source(
+                DataSource(
+                    dataset_id=dataset.dataset_id,
+                    original_filename=uploaded_file.name,
+                    file_type=suffix.lstrip("."),
+                )
+            )
+        st.success(f"Saved dataset metadata for '{uploaded_file.name}' (id={dataset.dataset_id}).")
+        st.caption(
+            "Note: only dataset-level metadata and quality metrics are stored at this phase. "
+            "Extracting entities/relationships from arbitrary uploaded files is a Phase 4/6 capability."
+        )
 
 
 def page_load_synthetic() -> None:
@@ -187,6 +253,8 @@ def page_datasets() -> None:
             with st.expander(f"{dataset.name} ({dataset.row_count:,} rows)"):
                 st.write(f"**Dataset ID:** `{dataset.dataset_id}`")
                 st.write(f"**Created:** {dataset.created_at}")
+                if dataset.quality_score is not None:
+                    st.write(f"**Data Quality Score:** {dataset.quality_score:.0f} / 100")
                 counts = entity_repo.count_by_dataset(dataset.dataset_id)
                 st.json(counts)
 

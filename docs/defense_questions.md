@@ -76,4 +76,55 @@ rewrite.
 
 ---
 
-*(Further questions will be appended as Phases 2–9 are implemented.)*
+## Phase 2 questions
+
+**Q: How is the Data Quality Score calculated?**
+A: It's a weighted average of four sub-metrics, each in [0, 100]:
+completeness (share of non-missing cells), uniqueness (share of
+non-duplicate rows), validity (share of type-checked values that parse as
+their declared type), and consistency (share of columns that don't mix
+numeric-looking and non-numeric-looking values). The weights (40/25/20/15)
+are a documented judgement call, not a fitted parameter — there's no
+"ground truth" quality score to fit against for an arbitrary dataset. The
+weighting reflects that missing data is usually the most damaging issue
+for downstream analysis, followed by duplication, then validity and
+formatting consistency.
+
+**Q: How do you detect "invalid values" in a column without knowing its schema in advance?**
+A: By design, ATLAS doesn't guess a schema for an arbitrary uploaded file.
+Instead, `detect_invalid_values` takes an optional `column_rules` mapping
+(column name -> "numeric" or "date") that the caller supplies when the
+expected type of specific columns is known (e.g. the synthetic dataset's
+`amount`, `confidence`, `timestamp` columns). Without rules, no values are
+flagged as invalid — validity defaults to 100%, which is the honest answer
+when nothing is known about what "valid" means for that column.
+
+**Q: What counts as a "consistent" column, and why use that heuristic?**
+A: A column is flagged as inconsistent if some (but not all) of its
+non-null values parse as numbers — e.g. a column mixing "30" and "thirty".
+That's a proxy, not a guarantee of consistency, because there's no schema
+to check against. It's deliberately conservative: a column that's
+entirely numeric-as-text, or entirely free text, is never flagged, only
+columns that visibly mix representations.
+
+**Q: Why does the cleaning step only remove exact duplicates and normalize whitespace, instead of doing more (e.g. filling missing values, fixing typos)?**
+A: Anything beyond that would be guessing at the data's meaning without
+domain knowledge — e.g. filling a missing age with a mean/median silently
+invents a value that was never observed, and "fixing" typos is exactly
+the fuzzy-matching problem that entity resolution (Phase 4) is designed to
+solve deliberately, with a similarity score and human-reviewable
+confidence, not silently during ingestion. Phase 2 only removes noise that
+is unambiguous: exact duplicate rows and stray whitespace.
+
+**Q: Why is `quality_score` computed on the persons table alone for the synthetic dataset, rather than across all six tables?**
+A: For Phase 2, the quality engine operates on a single tabular dataset,
+matching the "upload one file, get one score" flow. The synthetic dataset
+is really six related tables; persons is used as the representative table
+because it's the one most analogous to what a real single-file upload
+looks like. Extending the quality score to multi-table datasets (e.g. a
+weighted combination across tables) is a natural Phase 3+ extension once
+the graph layer makes cross-table relationships first-class.
+
+---
+
+*(Further questions will be appended as Phases 3–9 are implemented.)*

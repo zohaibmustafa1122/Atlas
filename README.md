@@ -4,8 +4,9 @@
 > heterogeneous datasets through entity resolution, graph analytics, and
 > anomaly detection. Built as a BS Data Science Final Year Project.
 
-**Status: Phase 1 (MVP) — project setup, database, synthetic data
-generator, CSV/JSON/XLSX ingestion, Streamlit dashboard.**
+**Status: Phase 2 — project setup, database, synthetic data generator,
+CSV/JSON/XLSX ingestion, cleaning/validation, Data Quality Engine,
+Streamlit dashboard.**
 
 ---
 
@@ -38,7 +39,7 @@ resource-efficient approach holds up and where it doesn't).
 | Phase | Capability |
 |---|---|
 | **1 (done)** | Project skeleton, relational schema, synthetic data generator, CSV/JSON/XLSX ingestion with dataset summaries, Streamlit MVP |
-| 2 | Data quality scoring, cleaning/normalization pipeline |
+| **2 (done)** | Data Quality Engine (completeness/uniqueness/validity/consistency), cleaning (whitespace, exact duplicates), schema validation |
 | 3 | Graph construction (NetworkX), centrality/PageRank/components, Graph Explorer, timeline, map |
 | 4 | Entity resolution (fuzzy matching, similarity scoring) |
 | 5 | Anomaly detection (Isolation Forest + statistical baselines) |
@@ -131,7 +132,10 @@ In the dashboard:
 - **Load Synthetic Data** → pick a size → *Load into database*.
 - **Upload Dataset** → upload any CSV/JSON/XLSX to see its dataset
   summary (rows, columns, missing values, duplicates, dtypes, processing
-  time) without touching the database.
+  time), a schema validation check, a cleaning report (duplicates removed,
+  whitespace normalized), and a **Data Quality Score** (0-100, with a
+  completeness/uniqueness/validity/consistency breakdown). Optionally save
+  the cleaned dataset's metadata and quality score to the database.
 - **Overview** / **Datasets** → see what's loaded.
 
 **4. Run the tests:**
@@ -178,9 +182,14 @@ Planned experiments (baseline vs. improved method, at 1,000 / 10,000 /
 - Performance: processing time, memory consumption, graph construction
   time, query response time.
 
-## 11. Limitations (current, Phase 1)
+## 11. Limitations (current, Phase 2)
 
-- No data cleaning/normalization pipeline yet (Phase 2).
+- The Data Quality Engine's "validity" and "consistency" checks are
+  heuristics (see `docs/defense_questions.md`), not schema-verified —
+  there is no ground-truth schema for an arbitrary uploaded file.
+- Cleaning is deliberately conservative: only exact duplicate rows and
+  stray whitespace are touched. No imputation, typo correction, or
+  type coercion happens automatically.
 - No graph construction, entity resolution, anomaly detection, NLP, or AI
   assistant yet — those are Phases 3–7.
 - Relationship/transaction referential integrity is enforced in the
