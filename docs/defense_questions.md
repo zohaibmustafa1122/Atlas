@@ -453,4 +453,84 @@ retrieval that could look overconfident to the person asking.
 
 ---
 
-*(Further questions will be appended as Phases 8–9 are implemented.)*
+## Phase 8 questions
+
+**Q: What was the actual research question, and was it answered?**
+A: "Can resource-efficient graph-based entity resolution and anomaly
+detection improve exploratory analysis of heterogeneous datasets on
+low-resource computing environments?" Partially yes, partially no, and
+both halves are reported. Entity resolution's multi-feature method clearly
+outperforms its baseline (H1 supported). Anomaly detection's Isolation
+Forest did NOT outperform its statistical baseline on this dataset (H2
+not supported) -- and that result, not a cherry-picked one, is what's in
+`docs/experiments.md`. Scalability holds for the parts of the pipeline
+specifically designed for it (H3 supported with a caveat). A research
+report that only reports the hypotheses that were confirmed isn't
+research, it's advocacy -- reporting the negative result for H2 is the
+more academically honest choice, and a stronger thing to defend than a
+suspiciously clean set of "everything worked" numbers.
+
+**Q: Why did entity resolution recall get worse as the dataset grew (0.92→0.55 baseline, 0.79→0.40 multi-feature)? Is that acceptable?**
+A: It's a direct, understood consequence of `MAX_CANDIDATE_PAIRS` -- the
+fixed budget on how many candidate pairs blocking is allowed to generate,
+which exists specifically to keep entity resolution's wall-clock time
+bounded at 100,000-record scale on a laptop. As datasets grow, more true
+duplicate pairs land in large blocks that get randomly subsampled rather
+than fully compared, so recall trades off against speed. Whether that's
+"acceptable" depends on the use case: for exploratory analysis (this
+project's stated purpose), a fast, moderately-recalled first pass that a
+human reviews is more useful than an unusably slow, complete one. This
+tradeoff is now explicit and measured, not hidden.
+
+**Q: You found and fixed a real bug (`_generate_candidate_pairs` starving small blocks) while running these experiments. Walk through how you found it.**
+A: The first 10,000-record run produced multi-feature F1 of ~0.02, a
+catastrophic drop from ~0.70 at 1,000 records -- far more than the
+threshold-sensitivity or blocking-recall tradeoffs already documented
+could explain, which was the signal something was actually broken rather
+than just "expected to get somewhat worse." Reading
+`_generate_candidate_pairs`, the bug was that it returned immediately the
+instant the global pair cap was hit, while iterating blocks in whatever
+order Python's dict happened to store them in. One oversized block (many
+names sharing a first-letter blocking key at 10,000+ records) could
+exhaust the entire cap before the loop ever reached the block containing
+a given true duplicate pair -- so that pair was silently never even
+compared, regardless of what its similarity score would have been. The
+fix budgets the cap proportionally across every block up front, and
+randomly subsamples an oversized block rather than truncating by record
+order. A regression test reconstructs the exact failure condition (one
+huge block, one small legitimate pair) so this can't silently reappear.
+
+**Q: Why use one fixed random seed instead of running each experiment multiple times and reporting confidence intervals?**
+A: A proper research paper would do exactly that -- multiple seeds, report
+mean +/- variance, and possibly statistical significance testing between
+methods. That was judged out of scope for an FYP-level demonstrative
+study: the fixed seed keeps every result exactly reproducible (anyone
+cloning the repo and running `scripts/run_experiments.py` gets the same
+numbers), which matters more here than a confidence interval on a single
+synthetic dataset. This is disclosed as a limitation in `docs/research.md`
+rather than presented as more rigorous than it is.
+
+**Q: Why is peak memory reported as a "cumulative watermark" instead of an isolated per-size measurement -- doesn't that make the number less useful?**
+A: `resource.getrusage(...).ru_maxrss` reports the highest memory the
+whole process has touched since it started, not since the current size's
+measurement began -- and `run_experiments.py` runs every size inside one
+process for simplicity. That means the 10,000-record row's reported
+memory technically includes whatever the 1,000-record row already
+allocated. An isolated measurement would need a fresh subprocess per
+size, which is straightforward to add but wasn't judged worth the added
+script complexity for what these numbers need to show (rough feasibility
+on 8 GB RAM, not a precise memory profile) -- and the limitation is
+disclosed rather than presenting the number as more precise than it is.
+
+**Q: Why does the experiment runner use a separate database file from the interactive dashboard?**
+A: So running research experiments can never corrupt whatever dataset a
+user has loaded for demonstration purposes, and vice versa -- the
+dashboard's `DATABASE_URL`-configured engine and the experiment script's
+dedicated `experiments.db` engine are two entirely separate SQLAlchemy
+engines that never share a session factory. This is a small design
+decision but a deliberate one: reproducible research and an interactive
+demo have different lifecycles and shouldn't share mutable state.
+
+---
+
+*(Further questions will be appended as Phase 9 is implemented.)*

@@ -32,6 +32,9 @@ Faker==28.4.1
 streamlit==1.38.0
 plotly==5.24.1
 
+# --- Research chart generation (Phase 8) ---
+matplotlib==3.9.2
+
 # --- Graph analytics & visualization (Phase 3) ---
 networkx==3.3
 pyvis==0.3.2

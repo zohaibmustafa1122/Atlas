@@ -4,11 +4,11 @@
 > heterogeneous datasets through entity resolution, graph analytics, and
 > anomaly detection. Built as a BS Data Science Final Year Project.
 
-**Status: Phase 7 — project setup, database, synthetic data generator,
+**Status: Phase 8 — project setup, database, synthetic data generator,
 CSV/JSON/XLSX ingestion, cleaning/validation, Data Quality Engine, graph
 construction & analytics, Graph Explorer, Timeline, Map, entity
 resolution, anomaly detection, NLP entity extraction, AI assistant,
-Streamlit dashboard.**
+Streamlit dashboard, and a reproducible research/evaluation study.**
 
 ---
 
@@ -47,7 +47,7 @@ resource-efficient approach holds up and where it doesn't).
 | **5 (done)** | Anomaly detection: statistical (robust z-score via median/MAD) vs Isolation Forest on transaction amounts, "potential anomaly" language (never "fraud"), precision/recall/F1 against injected ground truth, persisted to `analysis_runs`/`anomalies` |
 | **6 (done)** | NLP entity extraction: baseline regex (capitalized sequences + dates) vs spaCy NER (PERSON/ORG/GPE/DATE) on event descriptions, with graceful fallback if the spaCy model isn't installed |
 | **7 (done)** | Retrieval-grounded AI assistant: rule-based intent detection, evidence retrieval from the graph/ML/database modules, optional Claude (Anthropic) explanation step enforcing FACT/INFERENCE/UNCERTAINTY labeling, fully working fallback analytical mode with no API key |
-| 8 | Research evaluation: precision/recall/F1, performance benchmarks |
+| **8 (done)** | Reproducible research study (`scripts/run_experiments.py`): entity resolution and anomaly detection precision/recall/F1 vs. injected ground truth, performance/scalability benchmarks, at 1,000/10,000(/100,000) records — see `docs/research.md` and `docs/experiments.md` |
 | 9 | Deployment & documentation polish |
 
 ## 4. Architecture
@@ -176,6 +176,15 @@ In the dashboard:
 pytest
 ```
 
+**5. Run the research experiments** (see section 10):
+
+```bash
+python scripts/run_experiments.py --sizes 1000 10000
+```
+
+This uses its own isolated database file (`data/processed/experiments.db`)
+and never touches the dashboard's data.
+
 ## 8. Dataset
 
 The demonstration dataset is an entirely **synthetic "global events"**
@@ -205,22 +214,32 @@ See [`docs/database.md`](docs/database.md) for the full ER diagram, table
 reference, indexing strategy, and the rationale for each design decision
 (including the polymorphic `relationships`/`transactions` association).
 
-## 10. Research methodology (planned, Phase 8)
+## 10. Research methodology and results
 
 Research question: *Can resource-efficient graph-based entity resolution
 and anomaly detection improve exploratory analysis of heterogeneous
 datasets on low-resource computing environments?*
 
-Planned experiments (baseline vs. improved method, at 1,000 / 10,000 /
-100,000 records):
-- Entity resolution: precision, recall, F1 (baseline fuzzy matching vs.
-  multi-feature similarity).
-- Anomaly detection: precision, recall, F1, false positive rate
-  (statistical baseline vs. Isolation Forest).
-- Performance: processing time, memory consumption, graph construction
-  time, query response time.
+Full methodology, hypotheses, and experimental design: **[`docs/research.md`](docs/research.md)**.
+Measured results, charts, and discussion: **[`docs/experiments.md`](docs/experiments.md)**.
 
-## 11. Limitations (current, Phase 7)
+Headline findings (see the docs above for the full picture, including a
+real bug found and fixed while running these experiments):
+- **Entity resolution**: the multi-feature method clearly outperforms the
+  single-feature baseline (F1 0.70 vs 0.11 at 1,000 records; 0.41 vs 0.04
+  at 10,000), though recall for both degrades somewhat with scale due to
+  the bounded blocking budget that keeps runtime tractable.
+- **Anomaly detection**: the simple statistical baseline *outperforms*
+  Isolation Forest on this dataset (F1 1.00 vs 0.75 at 1,000 records; 1.00
+  vs 0.68 at 10,000) — reported as the genuine, explainable negative
+  result it is, not adjusted until the "improved" method looked better.
+
+To reproduce:
+```bash
+python scripts/run_experiments.py --sizes 1000 10000
+```
+
+## 11. Limitations (current, Phase 8)
 
 - The Data Quality Engine's "validity" and "consistency" checks are
   heuristics (see `docs/defense_questions.md`), not schema-verified —
@@ -273,6 +292,13 @@ Planned experiments (baseline vs. improved method, at 1,000 / 10,000 /
   trade-off, see `docs/database.md`).
 - Tested up to 100,000-record synthetic datasets; larger scales would need
   chunked ingestion and a non-SQLite backend.
+- Research experiments use one fixed random seed (reproducibility over
+  statistical confidence intervals) and report peak memory as a
+  cumulative watermark across the whole run, not isolated per dataset
+  size — both disclosed as deliberate scope limitations in `docs/research.md`.
+- Entity resolution's candidate-pair budget (needed to stay fast at
+  100,000-record scale) trades away some recall as datasets grow — a
+  measured, understood cost, not an oversight (see `docs/experiments.md`).
 
 ## 12. Future work
 

@@ -21,6 +21,7 @@ which is what makes this feasible at 100,000-record scale on a laptop
 (see `_blocking_keys`).
 """
 
+import random
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from itertools import combinations
@@ -107,20 +108,42 @@ def _generate_candidate_pairs(records: list[tuple[str, str]], max_pairs: int = M
     `records` is a list of (id, normalized_name). Returns pairs of indices
     rather than ids so callers can look up precomputed feature vectors
     (e.g. TF-IDF rows) by position.
+
+    The cap is budgeted evenly *across* blocks, rather than filled by
+    however many blocks come first in iteration order. An earlier version
+    of this function stopped the instant the global cap was reached, which
+    meant one oversized block (e.g. every person whose name starts with a
+    common letter) could exhaust the entire budget and silently starve out
+    every other block -- at 10,000+ records this collapsed entity
+    resolution recall from ~0.96 to ~0.03 (see docs/research.md). Blocks
+    that would exceed their share of the budget are randomly subsampled
+    instead of truncated, so coverage within a large block isn't biased by
+    record order either.
     """
     blocks: dict[str, list[int]] = {}
     for idx, (_, normalized_name) in enumerate(records):
         for key in _blocking_keys(normalized_name):
             blocks.setdefault(key, []).append(idx)
 
+    block_lists = [sorted(indices) for indices in blocks.values() if len(indices) >= 2]
+    if not block_lists:
+        return []
+
+    per_block_budget = max(1, max_pairs // len(block_lists))
+    rng = random.Random(42)
+
     seen: set[tuple[int, int]] = set()
-    for indices in blocks.values():
-        if len(indices) < 2:
+    for indices in block_lists:
+        pair_count = len(indices) * (len(indices) - 1) // 2
+        if pair_count <= per_block_budget:
+            seen.update(combinations(indices, 2))
             continue
-        for i, j in combinations(sorted(indices), 2):
-            seen.add((i, j))
-            if len(seen) >= max_pairs:
-                return list(seen)
+        sampled: set[tuple[int, int]] = set()
+        while len(sampled) < per_block_budget:
+            i, j = rng.sample(indices, 2)
+            sampled.add((min(i, j), max(i, j)))
+        seen.update(sampled)
+
     return list(seen)
 
 
