@@ -529,6 +529,24 @@ def page_map() -> None:
         hover_data={"country": True, "event_count": True, "marker_size": False},
         title="Locations (marker size = number of events)",
     )
+    # Disable every land/coastline/country/ocean layer: Plotly only needs to
+    # fetch world topology (from an external CDN, cdn.plot.ly) to draw those
+    # layers. Without this, the map silently renders blank with no error if
+    # that fetch fails -- which happens in any network-restricted
+    # environment, inconsistent with the rest of ATLAS working fully
+    # offline. Markers still position correctly from lat/lon alone, with no
+    # external dependency.
+    fig.update_geos(
+        showland=False,
+        showcountries=False,
+        showocean=False,
+        showlakes=False,
+        showrivers=False,
+        showcoastlines=False,
+        showframe=True,
+        framecolor="lightgray",
+        bgcolor="rgba(0,0,0,0)",
+    )
     st.plotly_chart(fig, use_container_width=True)
     st.dataframe(locations_df.drop(columns=["marker_size"]).sort_values("event_count", ascending=False))
 

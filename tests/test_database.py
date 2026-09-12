@@ -96,3 +96,36 @@ def test_relationship_can_reference_person_or_organization(session: Session) -> 
 
     counts = entity_repo.count_by_dataset(dataset.dataset_id)
     assert counts["relationships"] == 1
+
+
+def test_get_session_objects_remain_usable_after_commit_and_close() -> None:
+    """Regression test for a real bug found in Phase 9: without
+    expire_on_commit=False on the sessionmaker, every ORM attribute
+    becomes unreadable (DetachedInstanceError) the instant get_session()'s
+    commit() runs, because SQLAlchemy's default behavior expires all
+    loaded attributes on commit -- forcing a re-fetch that fails once the
+    session is closed. Nearly every dashboard page fetches an object
+    inside `with get_session()` and reads its attributes after the block
+    exits, so this setting is load-bearing, not cosmetic. See
+    docs/defense_questions.md (Phase 9 section).
+    """
+    import app.database.database as db_module
+
+    original_bind = db_module.SessionLocal.kw.get("bind")
+    test_engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(bind=test_engine)
+    db_module.SessionLocal.configure(bind=test_engine)
+    try:
+        with db_module.get_session() as db_session:
+            dataset = Dataset(name="Regression Test", row_count=5)
+            db_session.add(dataset)
+            db_session.flush()
+            dataset_id = dataset.dataset_id
+
+        # db_session is now committed and closed -- reading attributes
+        # here must not raise DetachedInstanceError.
+        assert dataset.name == "Regression Test"
+        assert dataset.row_count == 5
+        assert dataset.dataset_id == dataset_id
+    finally:
+        db_module.SessionLocal.configure(bind=original_bind)

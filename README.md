@@ -4,11 +4,12 @@
 > heterogeneous datasets through entity resolution, graph analytics, and
 > anomaly detection. Built as a BS Data Science Final Year Project.
 
-**Status: Phase 8 — project setup, database, synthetic data generator,
-CSV/JSON/XLSX ingestion, cleaning/validation, Data Quality Engine, graph
-construction & analytics, Graph Explorer, Timeline, Map, entity
-resolution, anomaly detection, NLP entity extraction, AI assistant,
-Streamlit dashboard, and a reproducible research/evaluation study.**
+**Status: All 9 phases complete.** Project setup, database, synthetic data
+generator, CSV/JSON/XLSX ingestion, cleaning/validation, Data Quality
+Engine, graph construction & analytics, Graph Explorer, Timeline, Map,
+entity resolution, anomaly detection, NLP entity extraction, AI
+assistant, a reproducible research/evaluation study, Docker support, and
+full documentation.
 
 ---
 
@@ -48,14 +49,15 @@ resource-efficient approach holds up and where it doesn't).
 | **6 (done)** | NLP entity extraction: baseline regex (capitalized sequences + dates) vs spaCy NER (PERSON/ORG/GPE/DATE) on event descriptions, with graceful fallback if the spaCy model isn't installed |
 | **7 (done)** | Retrieval-grounded AI assistant: rule-based intent detection, evidence retrieval from the graph/ML/database modules, optional Claude (Anthropic) explanation step enforcing FACT/INFERENCE/UNCERTAINTY labeling, fully working fallback analytical mode with no API key |
 | **8 (done)** | Reproducible research study (`scripts/run_experiments.py`): entity resolution and anomaly detection precision/recall/F1 vs. injected ground truth, performance/scalability benchmarks, at 1,000/10,000(/100,000) records — see `docs/research.md` and `docs/experiments.md` |
-| 9 | Deployment & documentation polish |
+| **9 (done)** | Deployment & documentation polish: Docker support, `docs/api.md`, `docs/ethics.md`, real dashboard screenshots, and a real bug (detached-session `DetachedInstanceError`, plus a silently-blank Map page) found and fixed while capturing them |
 
 ## 4. Architecture
 
 See [`docs/architecture.md`](docs/architecture.md) for the full pipeline
 diagram, layered module breakdown, and the reasoning behind each
 technology choice (SQLite→PostgreSQL, NetworkX→Neo4j, Streamlit-first,
-CPU-only ML).
+CPU-only ML). See [`docs/api.md`](docs/api.md) for the current FastAPI
+surface and what a fuller REST API would look like.
 
 ## 5. Technology stack
 
@@ -108,6 +110,22 @@ cp .env.example .env
 
 The spaCy model download is optional -- ATLAS falls back to a regex-based
 baseline entity extractor if it's skipped or fails (e.g. no network access).
+
+### Optional: Docker
+
+Every instruction in this README works without Docker. If you'd rather
+run ATLAS in a container (e.g. on a shared demo machine):
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+- Dashboard: http://localhost:8501
+- API health check: http://localhost:8000/health
+
+Both services share the same `./data` volume and `.env` file as running
+locally. See the `Dockerfile` and `docker-compose.yml` for details.
 
 ## 7. Usage
 
@@ -185,7 +203,36 @@ python scripts/run_experiments.py --sizes 1000 10000
 This uses its own isolated database file (`data/processed/experiments.db`)
 and never touches the dashboard's data.
 
-## 8. Dataset
+## 8. Screenshots
+
+All screenshots below are real captures of the running dashboard (headless
+Chromium via Playwright), not mockups.
+
+**Overview** — dataset summary cards and quality score.
+![Overview](docs/screenshots/overview.png)
+
+**Graph Explorer** — graph-wide centrality metrics, search-and-expand.
+![Graph Explorer](docs/screenshots/graph_explorer.png)
+
+**Timeline** — filterable event browser.
+![Timeline](docs/screenshots/timeline.png)
+
+**Map** — locations sized by event count.
+![Map](docs/screenshots/map.png)
+
+**Entity Resolution** — confidence-labeled candidate duplicate matches.
+![Entity Resolution](docs/screenshots/entity_resolution.png)
+
+**Anomalies** — potential anomalies, never labeled as confirmed fraud.
+![Anomalies](docs/screenshots/anomalies.png)
+
+**Text Entity Extraction** — spaCy NER over event descriptions.
+![Text Entity Extraction](docs/screenshots/text_entity_extraction.png)
+
+**AI Assistant** — retrieval-grounded answer in fallback analytical mode.
+![AI Assistant](docs/screenshots/ai_assistant.png)
+
+## 9. Dataset
 
 The demonstration dataset is an entirely **synthetic "global events"**
 schema: persons, organizations, locations, events, relationships, and
@@ -208,13 +255,13 @@ text for the Phase 6 NLP extraction module to find.
 No real individual or organization is represented anywhere in this
 dataset.
 
-## 9. Database design
+## 10. Database design
 
 See [`docs/database.md`](docs/database.md) for the full ER diagram, table
 reference, indexing strategy, and the rationale for each design decision
 (including the polymorphic `relationships`/`transactions` association).
 
-## 10. Research methodology and results
+## 11. Research methodology and results
 
 Research question: *Can resource-efficient graph-based entity resolution
 and anomaly detection improve exploratory analysis of heterogeneous
@@ -249,7 +296,7 @@ To reproduce:
 python scripts/run_experiments.py --sizes 1000 10000 100000
 ```
 
-## 11. Limitations (current, Phase 8)
+## 12. Limitations (current, Phase 8)
 
 - The Data Quality Engine's "validity" and "consistency" checks are
   heuristics (see `docs/defense_questions.md`), not schema-verified —
@@ -310,35 +357,37 @@ python scripts/run_experiments.py --sizes 1000 10000 100000
   100,000-record scale) trades away some recall as datasets grow — a
   measured, understood cost, not an oversight (see `docs/experiments.md`).
 
-## 12. Future work
+## 13. Future work
 
 Neo4j, PostgreSQL, a React frontend, local/RAG-based LLM assistance, and
 distributed processing are all documented as optional future extensions
 (see `docs/architecture.md`), intentionally deferred until the CPU-only
 core is complete and evaluated.
 
-## 13. Ethical considerations
+## 14. Ethical considerations
 
 ATLAS is built for **academic research, public-data analysis, and
 educational demonstration only**. It explicitly does not implement covert
 surveillance, unauthorized tracking, private-person profiling, facial
 recognition, or credential collection. All demo data is synthetic and
-clearly labeled as such. See [`docs/ethics.md`](docs/ethics.md)
-(added in a later phase) for the full ethics statement.
+clearly labeled as such, and hedged, non-definitive language
+("potential match", "potential anomaly") is enforced in code and tests,
+not just documentation. See [`docs/ethics.md`](docs/ethics.md) for the
+full ethics statement.
 
-## 14. Contributors
+## 15. Contributors
 
 Built by a BS Data Science student as a Final Year Project and scholarship
 portfolio piece.
 
-## 15. Project structure
+## 16. Project structure
 
 ```
 atlas/
 ├── app/            # FastAPI backend: ingestion, processing, database, graph, ml, nlp, ai, api
 ├── dashboard/      # Streamlit UI
 ├── data/           # raw / processed / synthetic (gitignored except .gitkeep)
-├── docs/           # architecture, database, defense prep, research (as phases land)
+├── docs/           # architecture, database, api, ethics, research, experiments, defense prep, screenshots
 ├── scripts/        # data generation and experiment scripts
 ├── tests/          # pytest suite
 ├── requirements.txt

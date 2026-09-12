@@ -22,7 +22,15 @@ settings = get_settings()
 _connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
 
 engine = create_engine(settings.database_url, connect_args=_connect_args)
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+# expire_on_commit=False: without this, every attribute on an ORM object
+# becomes unusable the instant get_session()'s commit() runs, because
+# SQLAlchemy's default behavior is to expire all loaded attributes on
+# commit (forcing a re-fetch on next access) -- but by then the session
+# is closed, so that re-fetch raises DetachedInstanceError. Callers
+# throughout this codebase (and the dashboard) routinely fetch an object
+# inside `with get_session()` and read its attributes after the block
+# exits, which is exactly the pattern this setting is required to support.
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
 
 def init_db() -> None:

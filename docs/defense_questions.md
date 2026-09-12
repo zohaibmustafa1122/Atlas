@@ -555,4 +555,72 @@ answer to the research question about resource-efficiency limits.
 
 ---
 
-*(Further questions will be appended as Phase 9 is implemented.)*
+## Phase 9 questions
+
+**Q: You found two more real bugs while doing "documentation polish" -- what were they, and how?**
+A: Capturing real dashboard screenshots (rather than just describing pages
+in words) with Playwright against a live, running instance surfaced both.
+First, `page_overview()` and `select_dataset()` (used by six other pages)
+threw `DetachedInstanceError` -- every dataset attribute became
+unreadable the instant the database session that fetched it closed. Root
+cause: SQLAlchemy's default `expire_on_commit=True` marks every ORM
+attribute "expired" after a session commits, so the next read has to
+re-fetch from the database -- which fails once the session is closed.
+Nearly every dashboard page fetches a `Dataset` inside one
+`with get_session()` block and reads its attributes after the block
+exits, so this was a load-bearing assumption the original session setup
+silently violated. Fixed by setting `expire_on_commit=False` on the
+sessionmaker (`app/database/database.py`) -- the standard, documented
+SQLAlchemy fix for exactly this pattern. Second, the Map page rendered
+completely blank with no error shown: Plotly's `scatter_geo` fetches
+world-map topology from an external CDN (`cdn.plot.ly`) to draw
+coastlines/countries, and that fetch failed silently in this sandboxed
+environment (and would fail identically for any user without internet
+access at that moment) -- leaving markers positioned correctly in the DOM
+but with the base map layers simply never appearing. Fixed by disabling
+every topology-dependent layer (`showland`, `showcountries`, etc.) via
+`fig.update_geos(...)`, so markers render from lat/lon alone with zero
+external dependency, consistent with the rest of ATLAS's "works fully
+offline" design.
+
+**Q: Why didn't automated tests catch either bug?**
+A: Both were client-runtime and network-timing issues that a Python-level
+unit or integration test wouldn't exercise. The `DetachedInstanceError`
+only manifests when a real SQLAlchemy session commits and closes and
+*then* an attribute is read -- every existing test either read attributes
+inside an open session or used a plain dict, matching the working
+pattern rather than the buggy one, so nothing forced the failure path.
+The Map bug is a client-side (JavaScript) rendering failure dependent on
+network reachability to a specific external host -- entirely outside what
+a Python test suite observes. This is precisely why the project's testing
+strategy explicitly includes launching the actual application and
+interacting with it, not just running `pytest` -- a documented general
+principle (see "For UI or frontend changes, start the dev server..." in
+this project's own engineering guidelines), and the reason both bugs were
+caught during "documentation polish" instead of shipping unnoticed.
+
+**Q: Why does the Docker setup exist if it wasn't run/verified with an actual container build in this environment?**
+A: The development sandbox used to build ATLAS has no Docker daemon
+available, so the `Dockerfile` and `docker-compose.yml` could not be
+build-tested end-to-end here -- that limitation is disclosed rather than
+claiming a verification that didn't happen. The files themselves follow
+standard, well-established patterns (a `python:3.11-slim` base, a
+`.dockerignore` that excludes `.env` and other secrets from the image,
+volume-mounted `./data` for persistence, an optional best-effort spaCy
+model download at build time) and were reviewed manually line by line.
+Anyone cloning the repository with Docker installed can verify
+`docker compose up --build` directly; this is flagged as the one part of
+Phase 9 that is written-and-reasoned-about but not runtime-verified in
+this session, in keeping with the project's practice of being explicit
+about what was and wasn't actually tested.
+
+**Q: Why exclude `docs/` and `README.md` from the Docker image (`.dockerignore`)?**
+A: They're documentation, not runtime dependencies -- the running
+container never reads them, so including them would only inflate the
+image size for no benefit. This is a small optimization, but the general
+principle (only ship what the running process actually needs) is the
+same one behind keeping `requirements.txt` lean throughout the project.
+
+---
+
+*(All 9 phases are now complete.)*

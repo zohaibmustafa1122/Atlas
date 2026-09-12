@@ -102,9 +102,9 @@ in isolation and keeps any single module from becoming a dumping ground.
   datasets specifically so performance can be measured at increasing scale
   rather than assumed.
 
-## 6. Phase roadmap
+## 6. Phase roadmap (all complete)
 
-1. **Phase 1 (this phase)** — project skeleton, database schema, synthetic
+1. **Phase 1** — project skeleton, database schema, synthetic
    data generator, CSV ingestion, Streamlit MVP.
 2. **Phase 2** — data quality engine, cleaning/normalization pipeline for
    uploaded datasets, dataset metadata tracking.
@@ -115,8 +115,10 @@ in isolation and keeps any single module from becoming a dumping ground.
 6. **Phase 6** — NLP entity extraction from free text fields.
 7. **Phase 7** — AI assistant (retrieval-grounded, fact/inference/uncertainty).
 8. **Phase 8** — research/evaluation: precision/recall/F1, performance
-   benchmarks across dataset sizes, baseline comparisons.
-9. **Phase 9** — deployment and documentation polish.
+   benchmarks across dataset sizes, baseline comparisons (see
+   `docs/research.md`, `docs/experiments.md`).
+9. **Phase 9** — deployment and documentation polish: Docker support,
+   `docs/api.md`, `docs/ethics.md`, real dashboard screenshots.
 
-Each phase must leave the application runnable end-to-end; no phase depends
+Each phase left the application runnable end-to-end; no phase depended
 on an unfinished future phase.
