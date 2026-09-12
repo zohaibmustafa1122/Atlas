@@ -383,4 +383,74 @@ this phase glossed over by omission.
 
 ---
 
-*(Further questions will be appended as Phases 7–9 are implemented.)*
+## Phase 7 questions
+
+**Q: Walk through the architecture: what actually happens between a user's question and an answer?**
+A: Four steps, in order. (1) **Intent detection** -- a handful of regex
+patterns classify the question into one of a fixed set of intents
+(overview, most_connected, shortest_path, anomalies, duplicates, quality).
+(2) **Entity mention extraction** -- the Phase 6 baseline NLP extractor
+finds capitalized-sequence candidates in the question text, then each is
+matched against real dataset records via the same indexed search used
+elsewhere (`EntityRepository.search_entities`), filtered by a string
+similarity threshold to reject spurious matches. (3) **Evidence
+retrieval** -- the intent's handler function calls the actual
+graph/ML/database modules (Phase 3-5) and returns a list of evidence
+strings; this is the *only* source of truth. (4) **Answer generation** --
+either an LLM explains the evidence in natural language under a strict
+system prompt, or (if no API key, or the call fails for any reason) a
+deterministic template lists the evidence directly. Nothing in steps 3-4
+can introduce a fact that wasn't retrieved in step 3.
+
+**Q: How do you guarantee the LLM can't hallucinate facts not in the evidence?**
+A: Two layers. First, the system prompt (`app/ai/prompts.py`) explicitly
+instructs the model to prefix genuine facts with "FACT:", label any
+reasoning beyond the evidence as "INFERENCE:", and flag ambiguity as
+"UNCERTAINTY:" -- this is a prompting-level control, not a hard guarantee
+(no prompt can force compliance with certainty). Second, and more
+importantly, the LLM is *never given retrieval access* -- it only receives
+the evidence list already assembled by step 3, so even a fully
+non-compliant model has no way to introduce a made-up transaction ID or
+person name it wasn't handed. It can still misinterpret or oversell the
+evidence in its own words, which is exactly why the FACT/INFERENCE/
+UNCERTAINTY labeling matters -- it's the intended mitigation, not a
+promise that hallucination is structurally impossible.
+
+**Q: Why is intent detection rule-based instead of using an LLM (or the spaCy model from Phase 6) to classify the question?**
+A: The intent set is small and fixed (six categories), and a handful of
+keyword patterns classifies them reliably. Using an LLM for this step
+would add latency, cost, and a new failure mode (the assistant's most
+basic routing step would now depend on network access) for no accuracy
+benefit at this scale. This mirrors the project's general principle of
+using the simplest method that works, reserving the LLM for the one step
+that actually needs natural-language generation: explaining evidence.
+
+**Q: Why does `_call_llm` catch a bare `except Exception`? Isn't that bad practice?**
+A: Normally, yes -- it's usually better to catch specific exceptions. Here
+it's a deliberate, documented exception to that rule: the project brief
+requires that *any* LLM failure (invalid key, network timeout, rate limit,
+a new SDK exception type that doesn't exist yet) degrades to the fallback
+mode rather than crashing the assistant. A narrower except clause risks
+missing a failure mode and crashing anyway, which is the one outcome this
+function exists to prevent.
+
+**Q: Why Claude (Anthropic) specifically, and why a small/fast model (Haiku) rather than a larger one?**
+A: The .env.example scaffolding supports either OPENAI_API_KEY or
+ANTHROPIC_API_KEY, but only the Anthropic path is implemented, to keep the
+integration surface small for a single FYP. A larger, more expensive model
+would not improve this specific task: the LLM step is explanation of
+already-retrieved evidence, not open-ended reasoning or research, so a
+small, fast, inexpensive model is the right fit -- consistent with the
+whole project's "resource-efficient" framing, this time applied to API
+cost/latency instead of local CPU/RAM.
+
+**Q: What happens if the LLM is asked something no intent handler covers?**
+A: It falls through to `overview` (the default intent) and gets the
+dataset-wide summary as evidence. This is intentionally the safest
+behavior for an unrecognized question: reporting general, always-true
+facts about the dataset — never guessing at a more specific but wrong
+retrieval that could look overconfident to the person asking.
+
+---
+
+*(Further questions will be appended as Phases 8–9 are implemented.)*

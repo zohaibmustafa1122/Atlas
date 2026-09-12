@@ -31,6 +31,10 @@ class Settings(BaseSettings):
 
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
+    # Only used if anthropic_api_key is set. A small/fast model is enough
+    # for explaining already-retrieved evidence -- this is not a reasoning
+    # task that needs a larger model.
+    llm_model: str = "claude-haiku-4-5-20251001"
 
     def ensure_data_dirs(self) -> None:
         """Create the data directories on disk if they don't already exist."""

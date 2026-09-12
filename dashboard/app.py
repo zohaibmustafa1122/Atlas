@@ -1,4 +1,4 @@
-"""ATLAS -- Streamlit dashboard (Phase 1-6).
+"""ATLAS -- Streamlit dashboard (Phase 1-7).
 
 Implemented so far, per the project roadmap (docs/architecture.md):
   - Upload a CSV/JSON/XLSX file, see a dataset summary, clean it, and get a
@@ -21,10 +21,14 @@ Implemented so far, per the project roadmap (docs/architecture.md):
   - Text Entity Extraction: baseline regex vs spaCy NER on event
     descriptions, extracting candidate PERSON/ORG/GPE/DATE mentions
     (Phase 6).
+  - AI Assistant: retrieval-grounded question answering (intent detection
+    -> evidence retrieval from the graph/ML/database modules above -> an
+    optional LLM explanation step that must separate FACT from INFERENCE
+    from UNCERTAINTY), with a fully working fallback analytical mode when
+    no LLM API key is configured (Phase 7).
 
-Later phases add the AI assistant. Its nav entry is shown below as a
-placeholder so the intended final navigation structure is visible from
-early on.
+Phases 8 (research/evaluation) and 9 (deployment/documentation polish)
+remain -- see docs/architecture.md for the roadmap.
 """
 
 import re
@@ -58,6 +62,7 @@ from app.ml.anomaly_detection import (  # noqa: E402
     evaluate_against_ground_truth as evaluate_anomalies_against_ground_truth,
     load_ground_truth_anomaly_ids,
 )
+from app.ai.assistant import answer_question  # noqa: E402
 from app.nlp.entity_extraction import extract_entities_for_texts, is_spacy_available  # noqa: E402
 from app.processing.cleaning import clean_dataframe  # noqa: E402
 from app.processing.entity_resolution import (  # noqa: E402
@@ -85,10 +90,9 @@ IMPLEMENTED_PAGES = [
     "Entity Resolution",
     "Anomalies",
     "Text Entity Extraction",
+    "AI Assistant",
 ]
-FUTURE_PAGES = [
-    "AI Assistant (Phase 7)",
-]
+FUTURE_PAGES: list[str] = []
 
 
 def render_sidebar() -> str:
@@ -96,10 +100,11 @@ def render_sidebar() -> str:
     st.sidebar.caption("Open Data Intelligence & Decision Support Platform")
     page = st.sidebar.radio("Navigate", IMPLEMENTED_PAGES)
     st.sidebar.markdown("---")
-    st.sidebar.caption("Coming in later phases:")
-    for future_page in FUTURE_PAGES:
-        st.sidebar.caption(f"- {future_page}")
-    st.sidebar.markdown("---")
+    if FUTURE_PAGES:
+        st.sidebar.caption("Coming in later phases:")
+        for future_page in FUTURE_PAGES:
+            st.sidebar.caption(f"- {future_page}")
+        st.sidebar.markdown("---")
     st.sidebar.caption(
         "All data shown is synthetic or user-uploaded for academic demonstration. "
         "ATLAS does not process real private-individual data."
@@ -811,6 +816,55 @@ def page_text_entity_extraction() -> None:
             st.caption("No entities extracted from the processed descriptions.")
 
 
+def page_ai_assistant() -> None:
+    st.title("AI Assistant")
+    st.caption(
+        "Ask a question about the selected dataset. Every answer is grounded in evidence "
+        "retrieved directly from the database and graph -- the assistant never answers from "
+        "general knowledge. If no LLM API key is configured, it still works, using a "
+        "deterministic analytical mode built from the same evidence."
+    )
+
+    settings_obj = get_settings()
+    if settings_obj.anthropic_api_key:
+        st.info(f"LLM-assisted mode is available (model: {settings_obj.llm_model}).")
+    else:
+        st.info(
+            "No ANTHROPIC_API_KEY configured -- running in fallback analytical mode "
+            "(retrieval-only, no natural-language explanation layer)."
+        )
+
+    dataset = select_dataset()
+    if dataset is None:
+        return
+
+    st.caption("Try: \"Give me an overview\", \"Who is most connected to <name>?\", "
+               "\"How is <name> connected to <name>?\", \"Are there any unusual transactions?\", "
+               "\"Are there any duplicate person records?\", \"What is the data quality score?\"")
+
+    question = st.text_input("Your question")
+    if st.button("Ask") and question:
+        with get_session() as session:
+            with st.spinner("Retrieving evidence and answering..."):
+                result = answer_question(session, dataset, question)
+        st.session_state["assistant_result"] = result
+
+    result = st.session_state.get("assistant_result")
+    if result is not None:
+        mode_label = "LLM-assisted explanation" if result.mode == "llm" else "Fallback analytical mode (no LLM)"
+        st.subheader(mode_label)
+        st.write(result.answer)
+
+        with st.expander("Evidence used to answer this question"):
+            if result.evidence:
+                for line in result.evidence:
+                    st.write(f"- {line}")
+            else:
+                st.caption("No evidence was retrieved.")
+            st.caption(f"Retrieved via: {', '.join(result.sources)}")
+        st.caption(f"Detected intent: `{result.intent}`")
+
+
 def page_datasets() -> None:
     st.title("Datasets")
     with get_session() as session:
@@ -854,6 +908,8 @@ def main() -> None:
         page_anomalies()
     elif page == "Text Entity Extraction":
         page_text_entity_extraction()
+    elif page == "AI Assistant":
+        page_ai_assistant()
 
 
 if __name__ == "__main__":

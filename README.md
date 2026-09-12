@@ -4,11 +4,11 @@
 > heterogeneous datasets through entity resolution, graph analytics, and
 > anomaly detection. Built as a BS Data Science Final Year Project.
 
-**Status: Phase 6 — project setup, database, synthetic data generator,
+**Status: Phase 7 — project setup, database, synthetic data generator,
 CSV/JSON/XLSX ingestion, cleaning/validation, Data Quality Engine, graph
 construction & analytics, Graph Explorer, Timeline, Map, entity
-resolution, anomaly detection, NLP entity extraction, Streamlit
-dashboard.**
+resolution, anomaly detection, NLP entity extraction, AI assistant,
+Streamlit dashboard.**
 
 ---
 
@@ -46,7 +46,7 @@ resource-efficient approach holds up and where it doesn't).
 | **4 (done)** | Entity resolution: blocking, baseline (Levenshtein) vs multi-feature (Levenshtein + token Jaccard + TF-IDF cosine) fuzzy matching, confidence-labeled results, precision/recall/F1 against injected ground truth |
 | **5 (done)** | Anomaly detection: statistical (robust z-score via median/MAD) vs Isolation Forest on transaction amounts, "potential anomaly" language (never "fraud"), precision/recall/F1 against injected ground truth, persisted to `analysis_runs`/`anomalies` |
 | **6 (done)** | NLP entity extraction: baseline regex (capitalized sequences + dates) vs spaCy NER (PERSON/ORG/GPE/DATE) on event descriptions, with graceful fallback if the spaCy model isn't installed |
-| 7 | Retrieval-grounded AI assistant (fact / inference / uncertainty) |
+| **7 (done)** | Retrieval-grounded AI assistant: rule-based intent detection, evidence retrieval from the graph/ML/database modules, optional Claude (Anthropic) explanation step enforcing FACT/INFERENCE/UNCERTAINTY labeling, fully working fallback analytical mode with no API key |
 | 8 | Research evaluation: precision/recall/F1, performance benchmarks |
 | 9 | Deployment & documentation polish |
 
@@ -65,6 +65,8 @@ CPU-only ML).
 - **ML:** scikit-learn (TF-IDF/cosine similarity for entity resolution; Isolation Forest for anomaly detection)
 - **Graph:** NetworkX, Neo4j-compatible interface for the future
 - **NLP:** spaCy (`en_core_web_sm`, CPU-only small model; regex baseline works without it)
+- **AI assistant:** retrieval-grounded, with an optional Claude (Anthropic) explanation
+  step; works fully without any LLM API key
 - **Visualization:** Streamlit, Plotly, Pyvis
 - **Testing:** Pytest
 
@@ -163,6 +165,10 @@ In the dashboard:
 - **Text Entity Extraction** → extract candidate PERSON/ORG/GPE/DATE mentions from event
   descriptions using spaCy NER, or a regex-only baseline if the spaCy model isn't installed.
   See extracted mentions per event and counts by label.
+- **AI Assistant** → ask a question in plain language ("Who is most connected to
+  &lt;name&gt;?", "Are there any unusual transactions?", "What is the data quality score?").
+  See the answer, which mode produced it (LLM-assisted or fallback analytical), the
+  retrieved evidence behind it, and which modules were queried.
 
 **4. Run the tests:**
 
@@ -214,7 +220,7 @@ Planned experiments (baseline vs. improved method, at 1,000 / 10,000 /
 - Performance: processing time, memory consumption, graph construction
   time, query response time.
 
-## 11. Limitations (current, Phase 6)
+## 11. Limitations (current, Phase 7)
 
 - The Data Quality Engine's "validity" and "consistency" checks are
   heuristics (see `docs/defense_questions.md`), not schema-verified —
@@ -255,7 +261,13 @@ Planned experiments (baseline vs. improved method, at 1,000 / 10,000 /
   labels everything "PROPER_NOUN") and will misfire on sentence-initial
   capitalization — a deliberate, documented weakness that motivates using
   spaCy where available.
-- No AI assistant yet — that's Phase 7.
+- The AI assistant's intent detection is a fixed set of six rule-based
+  categories (overview/most_connected/shortest_path/anomalies/duplicates/
+  quality); an unrecognized question falls through to a dataset overview
+  rather than guessing at a more specific but potentially wrong intent.
+- Only Anthropic (Claude) is implemented as an LLM provider, even though
+  `.env.example` scaffolds an OpenAI key too — kept intentionally narrow
+  for this FYP's scope.
 - Relationship/transaction referential integrity is enforced in the
   repository layer, not at the database schema level (documented
   trade-off, see `docs/database.md`).
