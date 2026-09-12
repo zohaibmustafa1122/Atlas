@@ -4,10 +4,11 @@
 > heterogeneous datasets through entity resolution, graph analytics, and
 > anomaly detection. Built as a BS Data Science Final Year Project.
 
-**Status: Phase 5 — project setup, database, synthetic data generator,
+**Status: Phase 6 — project setup, database, synthetic data generator,
 CSV/JSON/XLSX ingestion, cleaning/validation, Data Quality Engine, graph
 construction & analytics, Graph Explorer, Timeline, Map, entity
-resolution, anomaly detection, Streamlit dashboard.**
+resolution, anomaly detection, NLP entity extraction, Streamlit
+dashboard.**
 
 ---
 
@@ -44,7 +45,7 @@ resource-efficient approach holds up and where it doesn't).
 | **3 (done)** | Graph construction (NetworkX), degree/PageRank/betweenness centrality, connected components, community detection, shortest path, Graph Explorer (search + bounded expand + Pyvis viz), Timeline, Map |
 | **4 (done)** | Entity resolution: blocking, baseline (Levenshtein) vs multi-feature (Levenshtein + token Jaccard + TF-IDF cosine) fuzzy matching, confidence-labeled results, precision/recall/F1 against injected ground truth |
 | **5 (done)** | Anomaly detection: statistical (robust z-score via median/MAD) vs Isolation Forest on transaction amounts, "potential anomaly" language (never "fraud"), precision/recall/F1 against injected ground truth, persisted to `analysis_runs`/`anomalies` |
-| 6 | NLP entity extraction from free text |
+| **6 (done)** | NLP entity extraction: baseline regex (capitalized sequences + dates) vs spaCy NER (PERSON/ORG/GPE/DATE) on event descriptions, with graceful fallback if the spaCy model isn't installed |
 | 7 | Retrieval-grounded AI assistant (fact / inference / uncertainty) |
 | 8 | Research evaluation: precision/recall/F1, performance benchmarks |
 | 9 | Deployment & documentation polish |
@@ -63,6 +64,7 @@ CPU-only ML).
 - **Data processing:** Pandas (Polars planned for hot paths)
 - **ML:** scikit-learn (TF-IDF/cosine similarity for entity resolution; Isolation Forest for anomaly detection)
 - **Graph:** NetworkX, Neo4j-compatible interface for the future
+- **NLP:** spaCy (`en_core_web_sm`, CPU-only small model; regex baseline works without it)
 - **Visualization:** Streamlit, Plotly, Pyvis
 - **Testing:** Pytest
 
@@ -81,6 +83,7 @@ python -m venv .venv
 
 pip install --upgrade pip
 pip install -r requirements.txt
+python -m spacy download en_core_web_sm
 
 copy .env.example .env
 ```
@@ -96,9 +99,13 @@ source .venv/bin/activate
 
 pip install --upgrade pip
 pip install -r requirements.txt
+python -m spacy download en_core_web_sm
 
 cp .env.example .env
 ```
+
+The spaCy model download is optional -- ATLAS falls back to a regex-based
+baseline entity extractor if it's skipped or fails (e.g. no network access).
 
 ## 7. Usage
 
@@ -153,6 +160,9 @@ In the dashboard:
   (robust z-score) or Isolation Forest method, tune the sensitivity, and see confidence
   scores and reasons (always "potential anomaly," never "fraud"). For the synthetic
   dataset, see a live precision/recall/F1 comparison between the two methods.
+- **Text Entity Extraction** → extract candidate PERSON/ORG/GPE/DATE mentions from event
+  descriptions using spaCy NER, or a regex-only baseline if the spaCy model isn't installed.
+  See extracted mentions per event and counts by label.
 
 **4. Run the tests:**
 
@@ -173,6 +183,12 @@ known ground truth:
   resolution precision/recall in Phase 4/8.
 - **Extreme-outlier transaction amounts** — used to evaluate anomaly
   detection precision/recall in Phase 5/8.
+
+Event descriptions are templated to embed the event's own person/
+organization/location names (e.g. "{person} attended a {event_type} in
+{city} representing {org} on {date}"), rather than generic unrelated
+Faker sentences — otherwise there would be no actual named entities in the
+text for the Phase 6 NLP extraction module to find.
 
 No real individual or organization is represented anywhere in this
 dataset.
@@ -198,7 +214,7 @@ Planned experiments (baseline vs. improved method, at 1,000 / 10,000 /
 - Performance: processing time, memory consumption, graph construction
   time, query response time.
 
-## 11. Limitations (current, Phase 5)
+## 11. Limitations (current, Phase 6)
 
 - The Data Quality Engine's "validity" and "consistency" checks are
   heuristics (see `docs/defense_questions.md`), not schema-verified —
@@ -231,7 +247,15 @@ Planned experiments (baseline vs. improved method, at 1,000 / 10,000 /
   baseline actually outperforms Isolation Forest (F1 1.0 vs 0.75), because
   the injected anomalies are pure single-feature extremes — see
   `docs/defense_questions.md` for why that isn't a bug.
-- No NLP or AI assistant yet — those are Phases 6–7.
+- Extracted text entities (Phase 6) are candidate mentions, not linked to
+  the structured Person/Organization tables — that linking would itself
+  need entity resolution (Phase 4) applied to extraction output, which is
+  future work.
+- The baseline regex extractor can't distinguish person/org/place (it
+  labels everything "PROPER_NOUN") and will misfire on sentence-initial
+  capitalization — a deliberate, documented weakness that motivates using
+  spaCy where available.
+- No AI assistant yet — that's Phase 7.
 - Relationship/transaction referential integrity is enforced in the
   repository layer, not at the database schema level (documented
   trade-off, see `docs/database.md`).

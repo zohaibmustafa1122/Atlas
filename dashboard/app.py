@@ -1,4 +1,4 @@
-"""ATLAS -- Streamlit dashboard (Phase 1-4).
+"""ATLAS -- Streamlit dashboard (Phase 1-6).
 
 Implemented so far, per the project roadmap (docs/architecture.md):
   - Upload a CSV/JSON/XLSX file, see a dataset summary, clean it, and get a
@@ -18,10 +18,13 @@ Implemented so far, per the project roadmap (docs/architecture.md):
     transaction amounts, labeled "potential anomaly" (never "fraud"), with
     the same baseline-vs-improved evaluation against injected ground truth
     (Phase 5).
+  - Text Entity Extraction: baseline regex vs spaCy NER on event
+    descriptions, extracting candidate PERSON/ORG/GPE/DATE mentions
+    (Phase 6).
 
-Later phases add: NLP and the AI assistant. Their nav entries are shown
-below as placeholders so the intended final navigation structure is
-visible from early on.
+Later phases add the AI assistant. Its nav entry is shown below as a
+placeholder so the intended final navigation structure is visible from
+early on.
 """
 
 import re
@@ -55,6 +58,7 @@ from app.ml.anomaly_detection import (  # noqa: E402
     evaluate_against_ground_truth as evaluate_anomalies_against_ground_truth,
     load_ground_truth_anomaly_ids,
 )
+from app.nlp.entity_extraction import extract_entities_for_texts, is_spacy_available  # noqa: E402
 from app.processing.cleaning import clean_dataframe  # noqa: E402
 from app.processing.entity_resolution import (  # noqa: E402
     evaluate_against_ground_truth as evaluate_entity_resolution_against_ground_truth,
@@ -80,6 +84,7 @@ IMPLEMENTED_PAGES = [
     "Map",
     "Entity Resolution",
     "Anomalies",
+    "Text Entity Extraction",
 ]
 FUTURE_PAGES = [
     "AI Assistant (Phase 7)",
@@ -744,6 +749,68 @@ def page_anomalies() -> None:
                 )
 
 
+def page_text_entity_extraction() -> None:
+    st.title("Text Entity Extraction")
+    st.caption(
+        "Extract candidate people, organizations, locations, and dates from free-text event "
+        "descriptions. Extracted mentions are candidates found in text, not verified matches "
+        "to the structured Person/Organization records -- linking the two is future work."
+    )
+
+    dataset = select_dataset()
+    if dataset is None:
+        return
+
+    with get_session() as session:
+        events = EntityRepository(session).list_events(dataset.dataset_id)
+
+    texts = [(e.event_id, e.description) for e in events if e.description]
+    if not texts:
+        st.info("This dataset has no event descriptions to extract from.")
+        return
+
+    st.caption(f"{len(texts):,} event descriptions available.")
+    spacy_ready = is_spacy_available()
+    if not spacy_ready:
+        st.warning(
+            "spaCy model 'en_core_web_sm' is not installed, so only the baseline method is "
+            "available. Install it with: `python -m spacy download en_core_web_sm`"
+        )
+
+    method_options = ["spacy", "baseline"] if spacy_ready else ["baseline"]
+    method = st.radio(
+        "Method",
+        options=method_options,
+        format_func=lambda m: "spaCy NER (PERSON/ORG/GPE/DATE)" if m == "spacy" else "Baseline (regex: capitalized sequences + date patterns)",
+    )
+    max_texts = st.slider("Max descriptions to process", min_value=10, max_value=min(len(texts), 2000), value=min(len(texts), 200))
+
+    if st.button("Extract entities"):
+        with st.spinner(f"Running {method} extraction over {max_texts} descriptions..."):
+            records = extract_entities_for_texts(texts, method=method, max_texts=max_texts)
+        st.session_state["nlp_records"] = records
+        st.session_state["nlp_texts_by_id"] = dict(texts)
+
+    records = st.session_state.get("nlp_records")
+    if records is not None:
+        st.subheader(f"Extracted mentions ({len(records)})")
+        if records:
+            results_df = pd.DataFrame(records)
+            texts_by_id = st.session_state.get("nlp_texts_by_id", {})
+            results_df["description"] = results_df["source_id"].map(
+                lambda sid: (texts_by_id.get(sid, "")[:80] + "...") if len(texts_by_id.get(sid, "")) > 80 else texts_by_id.get(sid, "")
+            )
+            st.dataframe(results_df[["source_id", "entity_text", "label", "description"]])
+
+            st.subheader("Mentions by label")
+            label_counts = results_df["label"].value_counts().reset_index()
+            label_counts.columns = ["label", "count"]
+            fig = px.bar(label_counts, x="label", y="count", title="Extracted entity counts by label")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.caption("No entities extracted from the processed descriptions.")
+
+
 def page_datasets() -> None:
     st.title("Datasets")
     with get_session() as session:
@@ -785,6 +852,8 @@ def main() -> None:
         page_entity_resolution()
     elif page == "Anomalies":
         page_anomalies()
+    elif page == "Text Entity Extraction":
+        page_text_entity_extraction()
 
 
 if __name__ == "__main__":

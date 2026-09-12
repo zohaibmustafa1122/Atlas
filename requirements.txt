@@ -18,6 +18,13 @@ numpy==1.26.4
 # --- Machine learning (Phase 4: entity resolution, Phase 5: anomaly detection) ---
 scikit-learn==1.5.2
 
+# --- NLP (Phase 6) ---
+# After installing, download the small English model with:
+#   python -m spacy download en_core_web_sm
+# ATLAS runs without it (falls back to a regex-based baseline extractor),
+# but the spaCy method requires it.
+spacy==3.7.5
+
 # --- Synthetic data generation ---
 Faker==28.4.1
 

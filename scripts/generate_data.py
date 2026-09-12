@@ -150,17 +150,51 @@ def generate_persons(
     return pd.DataFrame(rows), pd.DataFrame(ground_truth_rows)
 
 
-def generate_events(fake: Faker, n: int, rng: random.Random, location_ids: list[str]) -> pd.DataFrame:
+EVENT_DESCRIPTION_TEMPLATES = [
+    "{person} attended a {event_type} in {city} representing {org} on {date_str}.",
+    "{org} confirmed that {person} took part in a {event_type} held in {city}.",
+    "A {event_type} involving {person} and {org} took place in {city} on {date_str}.",
+    "{person} issued a public statement regarding {org} following the {event_type} in {city}.",
+    "Representatives from {org}, including {person}, met in {city} for a {event_type}.",
+]
+
+
+def generate_events(
+    fake: Faker,
+    n: int,
+    rng: random.Random,
+    location_ids: list[str],
+    locations_df: pd.DataFrame,
+    person_names: list[str],
+    org_names: list[str],
+) -> pd.DataFrame:
+    """Generate events with descriptions that embed real person/org/location
+    names, so the NLP entity-extraction module (Phase 6) has something to
+    actually find -- a generic Faker sentence has no named entities in it.
+    """
+    city_by_location_id = dict(zip(locations_df["location_id"], locations_df["city"]))
     rows = []
     start = datetime(2015, 1, 1)
     for _ in range(n):
+        location_id = rng.choice(location_ids) if location_ids else ""
+        city = city_by_location_id.get(location_id) or fake.city()
+        event_type = rng.choice(EVENT_TYPES)
+        event_date = start + timedelta(days=rng.randint(0, 3650))
+        template = rng.choice(EVENT_DESCRIPTION_TEMPLATES)
+        description = template.format(
+            person=rng.choice(person_names) if person_names else fake.name(),
+            org=rng.choice(org_names) if org_names else fake.company(),
+            event_type=event_type,
+            city=city,
+            date_str=event_date.strftime("%B %d, %Y"),
+        )
         rows.append(
             {
                 "event_id": new_id(),
-                "event_type": rng.choice(EVENT_TYPES),
-                "date": (start + timedelta(days=rng.randint(0, 3650))).date().isoformat(),
-                "location_id": rng.choice(location_ids) if location_ids else "",
-                "description": fake.sentence(nb_words=10),
+                "event_type": event_type,
+                "date": event_date.date().isoformat(),
+                "location_id": location_id,
+                "description": description,
             }
         )
     return pd.DataFrame(rows)
@@ -244,7 +278,15 @@ def generate_dataset(size: int, seed: int = 42) -> dict[str, pd.DataFrame]:
     persons_df, entity_resolution_gt_df = generate_persons(
         fake, size, rng, organizations_df["organization_id"].tolist()
     )
-    events_df = generate_events(fake, n_events, rng, locations_df["location_id"].tolist())
+    events_df = generate_events(
+        fake,
+        n_events,
+        rng,
+        locations_df["location_id"].tolist(),
+        locations_df,
+        persons_df["name"].tolist(),
+        organizations_df["name"].tolist(),
+    )
     relationships_df = generate_relationships(
         n_relationships, rng, persons_df["person_id"].tolist(), organizations_df["organization_id"].tolist()
     )

@@ -323,4 +323,64 @@ baking in one number and hiding the trade-off it implies.
 
 ---
 
-*(Further questions will be appended as Phases 6–9 are implemented.)*
+## Phase 6 questions
+
+**Q: Why spaCy's small English model instead of a large transformer-based NER model?**
+A: The project brief explicitly rules out large deep-learning/transformer
+models, since they need more RAM and compute than an 8 GB CPU-only laptop
+comfortably provides. `en_core_web_sm` is a small (~12 MB), CPU-only
+statistical model that loads in under a second and runs NER, POS tagging,
+and dependency parsing fast enough for interactive use. It's less accurate
+than a large transformer NER model, but it is the right tool for this
+hardware budget, and it is still a trained statistical model, not a
+hand-written rule set.
+
+**Q: Why does ATLAS still work if spaCy or its model isn't installed?**
+A: `is_spacy_available()` checks once (cached) whether the model actually
+loads, and every caller checks it before offering the spaCy option. If
+it's unavailable, the dashboard falls back to the baseline regex extractor
+and tells the user exactly how to install the model
+(`python -m spacy download en_core_web_sm`) rather than crashing. This
+mirrors the AI assistant's planned fallback behavior in Phase 7 (works
+without an API key, just with reduced capability) -- a recurring design
+principle in this project: a missing optional dependency degrades
+gracefully, it never breaks the app.
+
+**Q: What can the baseline regex extractor actually distinguish, and why is that a meaningful comparison to spaCy?**
+A: The baseline finds two things: date-like patterns (a dedicated regex)
+and generic capitalized word sequences (everything else). It cannot tell
+whether "Acme Corp" is an organization, "Berlin" is a place, or "Muhammad
+Ali" is a person -- it labels all three "PROPER_NOUN". spaCy's NER model
+classifies each into PERSON/ORG/GPE/DATE because it was trained on labeled
+examples of exactly that distinction. This is a clean, honest
+demonstration of what a trained model adds over a hand-written heuristic:
+not "finds more entities" (the baseline often finds *more* candidates,
+including false positives from sentence-initial capitalization) but
+"classifies them correctly."
+
+**Q: The synthetic generator's event descriptions were changed to embed real names -- why, and is that "cheating" on the demo?**
+A: The original description text (`Faker.sentence()`) was generic gibberish
+with no actual named entities in it at all -- there was nothing for either
+extraction method to find, so the comparison would have been meaningless
+regardless of which method was "better." Templating the description
+around the event's own person/organization/location names (e.g. "{person}
+attended a {event_type} in {city} representing {org} on {date}") gives the
+extraction methods realistic text to work on, the same way real event
+reporting would mention who/what/where/when. It's not cheating because the
+ground truth (which names are actually in the text) is exactly what was
+inserted -- if anything, it makes evaluation more, not less, tractable for
+Phase 8.
+
+**Q: Extracted entities aren't linked back to the structured Person/Organization tables -- why not, and how would you add that?**
+A: A name found in free text (e.g. "Karen Santos") is a *candidate*
+mention; confirming it refers to the specific `Person` row with that name
+in the same dataset is itself an entity-resolution problem (Phase 4),
+just applied to extraction output instead of upload data. The correct
+approach would be to run each spaCy PERSON/ORG mention through
+`resolve_entities` against the dataset's persons/organizations, using the
+Phase 4 confidence bands -- which is a natural next step, not something
+this phase glossed over by omission.
+
+---
+
+*(Further questions will be appended as Phases 7–9 are implemented.)*
