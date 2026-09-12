@@ -4,10 +4,10 @@
 > heterogeneous datasets through entity resolution, graph analytics, and
 > anomaly detection. Built as a BS Data Science Final Year Project.
 
-**Status: Phase 3 — project setup, database, synthetic data generator,
+**Status: Phase 4 — project setup, database, synthetic data generator,
 CSV/JSON/XLSX ingestion, cleaning/validation, Data Quality Engine, graph
-construction & analytics, Graph Explorer, Timeline, Map, Streamlit
-dashboard.**
+construction & analytics, Graph Explorer, Timeline, Map, entity
+resolution, Streamlit dashboard.**
 
 ---
 
@@ -42,7 +42,7 @@ resource-efficient approach holds up and where it doesn't).
 | **1 (done)** | Project skeleton, relational schema, synthetic data generator, CSV/JSON/XLSX ingestion with dataset summaries, Streamlit MVP |
 | **2 (done)** | Data Quality Engine (completeness/uniqueness/validity/consistency), cleaning (whitespace, exact duplicates), schema validation |
 | **3 (done)** | Graph construction (NetworkX), degree/PageRank/betweenness centrality, connected components, community detection, shortest path, Graph Explorer (search + bounded expand + Pyvis viz), Timeline, Map |
-| 4 | Entity resolution (fuzzy matching, similarity scoring) |
+| **4 (done)** | Entity resolution: blocking, baseline (Levenshtein) vs multi-feature (Levenshtein + token Jaccard + TF-IDF cosine) fuzzy matching, confidence-labeled results, precision/recall/F1 against injected ground truth |
 | 5 | Anomaly detection (Isolation Forest + statistical baselines) |
 | 6 | NLP entity extraction from free text |
 | 7 | Retrieval-grounded AI assistant (fact / inference / uncertainty) |
@@ -61,7 +61,7 @@ CPU-only ML).
 - **Backend:** Python, FastAPI, Pydantic, SQLAlchemy
 - **Database:** SQLite (dev) → PostgreSQL (future, same ORM code)
 - **Data processing:** Pandas (Polars planned for hot paths)
-- **ML:** scikit-learn (Isolation Forest, Phase 5)
+- **ML:** scikit-learn (TF-IDF/cosine similarity for entity resolution; Isolation Forest, Phase 5)
 - **Graph:** NetworkX, Neo4j-compatible interface for the future
 - **Visualization:** Streamlit, Plotly, Pyvis
 - **Testing:** Pytest
@@ -144,6 +144,11 @@ In the dashboard:
   visualization, and find the shortest path between two entities.
 - **Timeline** → filter events by type and date range, see them on a scatter chart and in a table.
 - **Map** → see dataset locations on a world map, sized by number of events at each location.
+- **Entity Resolution** → find candidate duplicate persons (e.g. "Muhammad Ali" vs "M. Ali"),
+  choose baseline (Levenshtein-only) or multi-feature (Levenshtein + token Jaccard + TF-IDF
+  cosine) scoring, adjust the similarity threshold, and see confidence-labeled results.
+  For the synthetic dataset (which has known injected duplicates), also see a live
+  precision/recall/F1 comparison between the two methods.
 
 **4. Run the tests:**
 
@@ -189,7 +194,7 @@ Planned experiments (baseline vs. improved method, at 1,000 / 10,000 /
 - Performance: processing time, memory consumption, graph construction
   time, query response time.
 
-## 11. Limitations (current, Phase 3)
+## 11. Limitations (current, Phase 4)
 
 - The Data Quality Engine's "validity" and "consistency" checks are
   heuristics (see `docs/defense_questions.md`), not schema-verified —
@@ -206,8 +211,15 @@ Planned experiments (baseline vs. improved method, at 1,000 / 10,000 /
   (approximated) above that; community detection is skipped above the
   same threshold rather than approximated, since there's no similarly
   well-understood sampling method for modularity maximization.
-- No entity resolution, anomaly detection, NLP, or AI assistant yet —
-  those are Phases 4–7.
+- Entity resolution uses blocking (first-character + last-token keys) to
+  stay fast at 100,000-record scale, which trades a small amount of recall
+  for tractability — a documented, standard trade-off (see
+  `docs/defense_questions.md`), not an oversight.
+- The similarity threshold matters a lot: at a permissive threshold both
+  methods produce many false positives; the multi-feature method's
+  advantage over the baseline is clearest at a stricter threshold (see
+  `docs/defense_questions.md` for measured precision/recall/F1 at both).
+- No anomaly detection, NLP, or AI assistant yet — those are Phases 5–7.
 - Relationship/transaction referential integrity is enforced in the
   repository layer, not at the database schema level (documented
   trade-off, see `docs/database.md`).

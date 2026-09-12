@@ -1,4 +1,4 @@
-"""ATLAS -- Streamlit dashboard (Phase 1-3).
+"""ATLAS -- Streamlit dashboard (Phase 1-4).
 
 Implemented so far, per the project roadmap (docs/architecture.md):
   - Upload a CSV/JSON/XLSX file, see a dataset summary, clean it, and get a
@@ -10,12 +10,17 @@ Implemented so far, per the project roadmap (docs/architecture.md):
     shortest-path finding (Phase 3).
   - Timeline: filterable event browser (Phase 3).
   - Map: geospatial view of locations sized by event count (Phase 3).
+  - Entity Resolution: find candidate duplicate persons (fuzzy matching,
+    confidence-labeled, never claiming certainty), with a baseline-vs-
+    multi-feature precision/recall/F1 comparison against injected ground
+    truth when available (Phase 4).
 
-Later phases add: entity resolution, anomaly detection, NLP, and the AI
-assistant. Their nav entries are shown below as placeholders so the
-intended final navigation structure is visible from early on.
+Later phases add: anomaly detection, NLP, and the AI assistant. Their nav
+entries are shown below as placeholders so the intended final navigation
+structure is visible from early on.
 """
 
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -40,6 +45,7 @@ from app.ingestion.csv_loader import load_csv, summarize_dataframe  # noqa: E402
 from app.ingestion.excel_loader import load_excel  # noqa: E402
 from app.ingestion.json_loader import load_json  # noqa: E402
 from app.processing.cleaning import clean_dataframe  # noqa: E402
+from app.processing.entity_resolution import evaluate_against_ground_truth, load_ground_truth_pairs, resolve_entities  # noqa: E402
 from app.processing.loading import load_synthetic_dataset  # noqa: E402
 from app.processing.quality import compute_quality_score  # noqa: E402
 from app.processing.validation import validate_schema  # noqa: E402
@@ -57,9 +63,9 @@ IMPLEMENTED_PAGES = [
     "Graph Explorer",
     "Timeline",
     "Map",
+    "Entity Resolution",
 ]
 FUTURE_PAGES = [
-    "Entity Explorer (Phase 4)",
     "Anomalies (Phase 5)",
     "AI Assistant (Phase 7)",
 ]
@@ -502,6 +508,98 @@ def page_map() -> None:
     st.dataframe(locations_df.drop(columns=["marker_size"]).sort_values("event_count", ascending=False))
 
 
+def page_entity_resolution() -> None:
+    st.title("Entity Resolution")
+    st.caption(
+        "Find person records that may refer to the same real-world identity, despite "
+        "different spellings (e.g. \"Muhammad Ali\" vs \"M. Ali\"). Results are always "
+        "confidence-labeled -- ATLAS never claims two records definitely ARE the same entity."
+    )
+
+    dataset = select_dataset()
+    if dataset is None:
+        return
+
+    with get_session() as session:
+        persons = EntityRepository(session).list_persons(dataset.dataset_id)
+
+    if not persons:
+        st.info("This dataset has no person records.")
+        return
+
+    st.caption(f"{len(persons):,} person records loaded.")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        method = st.radio(
+            "Method",
+            options=["multi_feature", "baseline"],
+            format_func=lambda m: "Multi-feature (Levenshtein + token Jaccard + TF-IDF cosine)"
+            if m == "multi_feature"
+            else "Baseline (Levenshtein ratio only)",
+        )
+    with col2:
+        threshold = st.slider("Minimum similarity threshold", min_value=0.3, max_value=0.95, value=0.70, step=0.05)
+
+    if st.button("Find potential duplicate persons"):
+        person_pairs = [(p.person_id, p.name) for p in persons]
+        with st.spinner("Blocking and scoring candidate pairs..."):
+            candidates = resolve_entities(person_pairs, method=method, threshold=threshold)
+        st.session_state["entity_resolution_candidates"] = candidates
+        st.session_state["entity_resolution_persons"] = person_pairs
+
+    candidates = st.session_state.get("entity_resolution_candidates")
+    if candidates is not None:
+        st.subheader(f"Candidate matches ({len(candidates)})")
+        if candidates:
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "name_a": c.name_a,
+                            "name_b": c.name_b,
+                            "similarity": c.similarity,
+                            "confidence": c.confidence,
+                            "reason": c.reason,
+                        }
+                        for c in candidates
+                    ]
+                )
+            )
+        else:
+            st.caption("No candidates found at this threshold.")
+
+        size_match = re.search(r"scale=(\d+)", dataset.description or "")
+        if size_match:
+            ground_truth = load_ground_truth_pairs(settings.synthetic_data_dir, int(size_match.group(1)))
+            if ground_truth:
+                st.markdown("---")
+                st.subheader("Evaluation against known ground truth")
+                st.caption(
+                    "This dataset was synthetically generated with known duplicate identities "
+                    "(see scripts/generate_data.py), so predictions can be scored directly."
+                )
+                current_eval = evaluate_against_ground_truth(candidates, ground_truth)
+                other_method = "baseline" if method == "multi_feature" else "multi_feature"
+                other_candidates = resolve_entities(
+                    st.session_state["entity_resolution_persons"], method=other_method, threshold=threshold
+                )
+                other_eval = evaluate_against_ground_truth(other_candidates, ground_truth)
+
+                comparison_df = pd.DataFrame(
+                    [
+                        {"method": method, "precision": current_eval.precision, "recall": current_eval.recall, "f1": current_eval.f1_score},
+                        {"method": other_method, "precision": other_eval.precision, "recall": other_eval.recall, "f1": other_eval.f1_score},
+                    ]
+                )
+                st.table(comparison_df)
+                st.caption(
+                    f"True positives: {current_eval.true_positives}, "
+                    f"false positives: {current_eval.false_positives}, "
+                    f"false negatives: {current_eval.false_negatives} (for the selected method)."
+                )
+
+
 def page_datasets() -> None:
     st.title("Datasets")
     with get_session() as session:
@@ -539,6 +637,8 @@ def main() -> None:
         page_timeline()
     elif page == "Map":
         page_map()
+    elif page == "Entity Resolution":
+        page_entity_resolution()
 
 
 if __name__ == "__main__":

@@ -15,6 +15,9 @@ sqlalchemy==2.0.35
 pandas==2.2.3
 numpy==1.26.4
 
+# --- Machine learning (Phase 4: entity resolution, Phase 5: anomaly detection) ---
+scikit-learn==1.5.2
+
 # --- Synthetic data generation ---
 Faker==28.4.1
 

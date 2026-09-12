@@ -125,6 +125,9 @@ class EntityRepository:
         ] + [{"id": o.organization_id, "name": o.name, "type": "Organization"} for o in org_matches]
         return results[:limit]
 
+    def list_persons(self, dataset_id: str) -> list[Person]:
+        return list(self.session.query(Person).filter(Person.dataset_id == dataset_id).all())
+
     def list_events(self, dataset_id: str) -> list[Event]:
         return list(self.session.query(Event).filter(Event.dataset_id == dataset_id).all())
 

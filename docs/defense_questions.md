@@ -193,4 +193,73 @@ whether the data is already in memory.
 
 ---
 
-*(Further questions will be appended as Phases 4–9 are implemented.)*
+## Phase 4 questions
+
+**Q: Why does ATLAS never say two records "are" the same entity, only that they're a "potential match"?**
+A: Entity resolution is a similarity estimate, not ground truth verification.
+Two different people can have identical names; the same person can be
+written many different ways. Claiming certainty where there is only
+statistical similarity would be actively misleading in an analytical tool
+-- exactly the kind of overclaiming the project brief explicitly warns
+against. `confidence_label()` uses hedged language ("potential", "possible",
+"weak possible") at every band, and there is no band that says "confirmed"
+or "same".
+
+**Q: What is blocking, and why is it necessary?**
+A: Comparing every person against every other person is O(n^2) -- at
+100,000 records that's 5 billion pairs, infeasible on a laptop. Blocking
+groups records by a cheap key first (here: first character of the
+normalized name, and the last token) and only compares records that share
+at least one key. This trades a small amount of recall (a true duplicate
+pair that shares neither key is never even compared) for turning the
+problem from O(n^2) into something close to O(n) in practice. It's a
+standard, well-documented technique in the entity-resolution literature,
+not an ad hoc shortcut.
+
+**Q: Why these two blocking keys specifically?**
+A: They were chosen to survive the kinds of variation the synthetic
+generator actually injects (initials, honorifics, dropped middle names,
+single-character typos) -- see `_blocking_keys`'s docstring for the
+worked-through cases. The known failure mode is a variant that changes
+both the first character and the last token (e.g. a typo hitting the very
+first or very last character) which no two-key blocking scheme can fully
+avoid; a production system would add more blocking passes (e.g. phonetic
+keys like Soundex) to reduce that risk further.
+
+**Q: Explain the multi-feature score: why these three features and these weights?**
+A: Levenshtein ratio (weight 0.4) catches character-level typos and small
+edits. Token (word-set) Jaccard similarity (weight 0.3) catches
+word-reordering and dropped/added words (e.g. honorifics) that Levenshtein
+alone penalizes harshly. Character n-gram TF-IDF cosine similarity (weight
+0.3) catches partial/abbreviated tokens (e.g. an initial) that pure token
+overlap would miss entirely, since "M" and "Muhammad" share zero whole
+tokens but overlapping character n-grams. Levenshtein gets the largest
+weight because it's the most broadly reliable signal for short strings;
+the other two compensate for its specific blind spots. As with the Data
+Quality Engine's weights (Phase 2), this is a documented judgement call,
+not a fitted parameter.
+
+**Q: Your baseline-vs-improved evaluation showed low precision at threshold 0.55 (F1 ~0.02-0.10) but much better at 0.70 (F1 ~0.07 baseline vs ~0.69 multi-feature). What does that tell you?**
+A: Two things. First, the similarity threshold matters enormously --
+0.55 is too permissive for this dataset (many unrelated people who
+happen to share a first letter and have moderately similar names cross
+that bar), while 0.70 is a much better precision/recall trade-off here.
+Second, and more importantly for the research question, the *gap between
+methods widens sharply* at the higher threshold: multi-feature clearly
+outperforms the single-feature baseline once the threshold is high enough
+to separate signal from noise. That is itself a finding worth reporting in
+Phase 8, not just an implementation detail -- it shows the extra features
+earn their computational cost primarily when precision matters, not
+uniformly everywhere.
+
+**Q: Why is `evaluate_against_ground_truth` in Phase 4 instead of waiting for Phase 8?**
+A: The synthetic generator (Phase 1) already injects known duplicate pairs
+specifically so entity resolution could be validated as soon as it existed
+-- leaving that unused until Phase 8 would mean shipping an unvalidated
+algorithm for three phases. This function is a *development-time* check
+(does this dataset's specific run look reasonable?); Phase 8's job is the
+full study across multiple dataset sizes with proper experimental write-up.
+
+---
+
+*(Further questions will be appended as Phases 5–9 are implemented.)*
