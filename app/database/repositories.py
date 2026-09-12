@@ -100,6 +100,43 @@ class EntityRepository:
         }
         return person_ids | org_ids
 
+    def search_entities(self, dataset_id: str, query: str, limit: int = 25) -> list[dict]:
+        """Case-insensitive substring search over person and organization names.
+
+        Done as a SQL LIKE query (rather than scanning an in-memory graph)
+        so search stays fast at the 100,000-row scale, where iterating every
+        node in Python would be noticeably slower.
+        """
+        pattern = f"%{query}%"
+        person_matches = (
+            self.session.query(Person)
+            .filter(Person.dataset_id == dataset_id, Person.name.ilike(pattern))
+            .limit(limit)
+            .all()
+        )
+        org_matches = (
+            self.session.query(Organization)
+            .filter(Organization.dataset_id == dataset_id, Organization.name.ilike(pattern))
+            .limit(limit)
+            .all()
+        )
+        results = [
+            {"id": p.person_id, "name": p.name, "type": "Person"} for p in person_matches
+        ] + [{"id": o.organization_id, "name": o.name, "type": "Organization"} for o in org_matches]
+        return results[:limit]
+
+    def list_events(self, dataset_id: str) -> list[Event]:
+        return list(self.session.query(Event).filter(Event.dataset_id == dataset_id).all())
+
+    def list_locations(self, dataset_id: str) -> list[Location]:
+        return list(self.session.query(Location).filter(Location.dataset_id == dataset_id).all())
+
+    def get_person(self, person_id: str) -> Person | None:
+        return self.session.get(Person, person_id)
+
+    def get_organization(self, organization_id: str) -> Organization | None:
+        return self.session.get(Organization, organization_id)
+
     def count_by_dataset(self, dataset_id: str) -> dict[str, int]:
         """Return entity counts for a dataset, for dashboard summary cards."""
         return {
@@ -128,6 +165,19 @@ class AnalysisRepository:
         self.session.add(run)
         self.session.flush()
         return run
+
+    def complete_run(self, run: AnalysisRun, finished_at) -> AnalysisRun:
+        run.finished_at = finished_at
+        self.session.flush()
+        return run
+
+    def runs_for_dataset(self, dataset_id: str) -> list[AnalysisRun]:
+        return list(
+            self.session.query(AnalysisRun)
+            .filter(AnalysisRun.dataset_id == dataset_id)
+            .order_by(AnalysisRun.started_at.desc())
+            .all()
+        )
 
     def add_anomalies(self, anomalies: list[Anomaly]) -> None:
         self.session.add_all(anomalies)

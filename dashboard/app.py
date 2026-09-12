@@ -1,15 +1,19 @@
-"""ATLAS -- Streamlit dashboard (Phase 1-2).
+"""ATLAS -- Streamlit dashboard (Phase 1-3).
 
 Implemented so far, per the project roadmap (docs/architecture.md):
   - Upload a CSV/JSON/XLSX file, see a dataset summary, clean it, and get a
     Data Quality Score with a per-metric breakdown (Phase 2).
   - Generate/load the synthetic demo dataset into the database.
   - See a basic overview of what's stored.
+  - Graph Explorer: graph-wide analytics (centrality, PageRank, components,
+    community detection), search-and-expand neighborhood visualization, and
+    shortest-path finding (Phase 3).
+  - Timeline: filterable event browser (Phase 3).
+  - Map: geospatial view of locations sized by event count (Phase 3).
 
-Later phases add: entity resolution, graph exploration, timeline, map,
-anomaly detection, and the AI assistant. Their nav entries are shown below
-as placeholders so the intended final navigation structure is visible from
-early on.
+Later phases add: entity resolution, anomaly detection, NLP, and the AI
+assistant. Their nav entries are shown below as placeholders so the
+intended final navigation structure is visible from early on.
 """
 
 import sys
@@ -17,15 +21,21 @@ import tempfile
 from pathlib import Path
 
 import pandas as pd
+import plotly.express as px
 import streamlit as st
+import streamlit.components.v1 as components
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.core.config import get_settings  # noqa: E402
 from app.database.database import get_session, init_db  # noqa: E402
-from app.database.models import DataSource, Dataset  # noqa: E402
-from app.database.repositories import DatasetRepository, EntityRepository  # noqa: E402
+from app.database.models import AnalysisRun, DataSource, Dataset  # noqa: E402
+from app.database.repositories import AnalysisRepository, DatasetRepository, EntityRepository  # noqa: E402
+from app.graph.analytics import compute_graph_metrics, detect_communities, find_shortest_path  # noqa: E402
+from app.graph.builder import build_graph_for_dataset  # noqa: E402
+from app.graph.queries import get_neighborhood, list_edge_types  # noqa: E402
+from app.graph.visualize import render_graph_html  # noqa: E402
 from app.ingestion.csv_loader import load_csv, summarize_dataframe  # noqa: E402
 from app.ingestion.excel_loader import load_excel  # noqa: E402
 from app.ingestion.json_loader import load_json  # noqa: E402
@@ -39,12 +49,17 @@ st.set_page_config(page_title="ATLAS", layout="wide", initial_sidebar_state="exp
 settings = get_settings()
 init_db()
 
-IMPLEMENTED_PAGES = ["Overview", "Upload Dataset", "Load Synthetic Data", "Datasets"]
+IMPLEMENTED_PAGES = [
+    "Overview",
+    "Upload Dataset",
+    "Load Synthetic Data",
+    "Datasets",
+    "Graph Explorer",
+    "Timeline",
+    "Map",
+]
 FUTURE_PAGES = [
     "Entity Explorer (Phase 4)",
-    "Graph Explorer (Phase 3)",
-    "Timeline (Phase 3)",
-    "Map (Phase 3)",
     "Anomalies (Phase 5)",
     "AI Assistant (Phase 7)",
 ]
@@ -238,6 +253,255 @@ def page_load_synthetic() -> None:
         st.json(counts)
 
 
+def select_dataset() -> Dataset | None:
+    """Shared dataset picker used by the Graph Explorer, Timeline, and Map pages."""
+    with get_session() as session:
+        datasets = DatasetRepository(session).list_all()
+
+    if not datasets:
+        st.info("No datasets loaded yet. Use **Load Synthetic Data** to get started.")
+        return None
+
+    options = {f"{d.name} ({d.row_count:,} rows)": d.dataset_id for d in datasets}
+    choice = st.selectbox("Dataset", list(options.keys()))
+    with get_session() as session:
+        return DatasetRepository(session).get(options[choice])
+
+
+@st.cache_resource(show_spinner="Building graph from database...")
+def get_graph_for_dataset(dataset_id: str):
+    with get_session() as session:
+        return build_graph_for_dataset(session, dataset_id)
+
+
+def page_graph_explorer() -> None:
+    st.title("Graph Explorer")
+    st.caption(
+        "Entities and relationships modeled as a graph. Large graphs are never rendered in "
+        "full -- pick a starting entity and expand outward a bounded number of hops."
+    )
+
+    dataset = select_dataset()
+    if dataset is None:
+        return
+
+    graph = get_graph_for_dataset(dataset.dataset_id)
+    if graph.number_of_nodes() == 0:
+        st.warning("This dataset has no entities loaded into the graph yet.")
+        return
+
+    st.subheader("Graph-wide statistics")
+    if st.button("Compute graph metrics"):
+        with get_session() as session:
+            analysis_repo = AnalysisRepository(session)
+            run = analysis_repo.create_run(
+                AnalysisRun(dataset_id=dataset.dataset_id, run_type="graph_metrics")
+            )
+            metrics = compute_graph_metrics(graph)
+            analysis_repo.complete_run(run, finished_at=run.started_at)
+        st.session_state["graph_metrics"] = metrics
+
+    metrics = st.session_state.get("graph_metrics")
+    if metrics:
+        cols = st.columns(4)
+        cols[0].metric("Nodes", f"{metrics.node_count:,}")
+        cols[1].metric("Edges", f"{metrics.edge_count:,}")
+        cols[2].metric("Connected components", metrics.connected_components)
+        cols[3].metric("Density", metrics.density)
+
+        if metrics.betweenness_approximated:
+            st.caption(
+                "Betweenness centrality is approximated (sampled) because this graph exceeds "
+                "the exact-computation size threshold -- see docs/defense_questions.md."
+            )
+
+        top_cols = st.columns(3)
+        with top_cols[0]:
+            st.write("**Top by degree centrality**")
+            st.table(_top_scores_table(graph, metrics.top_degree))
+        with top_cols[1]:
+            st.write("**Top by PageRank**")
+            st.table(_top_scores_table(graph, metrics.top_pagerank))
+        with top_cols[2]:
+            st.write("**Top by betweenness**")
+            st.table(_top_scores_table(graph, metrics.top_betweenness))
+
+        with st.expander("Community detection (greedy modularity)"):
+            communities = detect_communities(graph)
+            if communities is None:
+                st.caption("Skipped: graph is too large for community detection at this resource budget.")
+            else:
+                st.write(f"Found {len(communities)} communities.")
+                for i, community in enumerate(communities[:10]):
+                    labels = [graph.nodes[n].get("label", n) for n in community[:15]]
+                    st.write(f"Community {i + 1} ({len(community)} members): {', '.join(labels)}")
+
+    st.markdown("---")
+    st.subheader("Search & expand")
+    query = st.text_input("Search for a person or organization by name")
+    node_id = None
+    if query:
+        with get_session() as session:
+            matches = EntityRepository(session).search_entities(dataset.dataset_id, query)
+        if matches:
+            choice = st.selectbox(
+                "Select an entity",
+                options=[m["id"] for m in matches],
+                format_func=lambda mid: next(f"{m['name']} ({m['type']})" for m in matches if m["id"] == mid),
+            )
+            node_id = choice
+        else:
+            st.caption("No matches.")
+
+    if node_id:
+        depth = st.slider("Expand degrees", min_value=1, max_value=3, value=1)
+        edge_type_options = list_edge_types(graph)
+        selected_edge_types = st.multiselect("Filter by relationship type", edge_type_options, default=[])
+
+        neighborhood = get_neighborhood(
+            graph, node_id, depth=depth, edge_types=selected_edge_types or None
+        )
+        st.caption(f"Showing {neighborhood.number_of_nodes()} nodes, {neighborhood.number_of_edges()} edges.")
+
+        html = render_graph_html(neighborhood, highlight_node=node_id)
+        components.html(html, height=620, scrolling=False)
+
+        with st.expander("Selected entity metadata"):
+            st.json({k: v for k, v in graph.nodes[node_id].items()})
+
+    st.markdown("---")
+    st.subheader("Shortest path between two entities")
+    path_cols = st.columns(2)
+    with path_cols[0]:
+        query_a = st.text_input("Entity A", key="path_a_query")
+    with path_cols[1]:
+        query_b = st.text_input("Entity B", key="path_b_query")
+
+    if query_a and query_b:
+        with get_session() as session:
+            repo = EntityRepository(session)
+            matches_a = repo.search_entities(dataset.dataset_id, query_a, limit=5)
+            matches_b = repo.search_entities(dataset.dataset_id, query_b, limit=5)
+        if matches_a and matches_b:
+            node_a = st.selectbox("Match for A", [m["id"] for m in matches_a], format_func=lambda mid: next(m["name"] for m in matches_a if m["id"] == mid), key="path_a_select")
+            node_b = st.selectbox("Match for B", [m["id"] for m in matches_b], format_func=lambda mid: next(m["name"] for m in matches_b if m["id"] == mid), key="path_b_select")
+            if st.button("Find shortest path"):
+                path = find_shortest_path(graph, node_a, node_b)
+                if path is None:
+                    st.warning("No path found between these two entities.")
+                else:
+                    labels = [graph.nodes[n].get("label", n) for n in path]
+                    st.success(f"Path length: {len(path) - 1} hop(s)")
+                    st.write(" -> ".join(labels))
+        else:
+            st.caption("No matches for one or both entities.")
+
+
+def _top_scores_table(graph, scored_nodes: list[tuple[str, float]]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [{"entity": graph.nodes[node_id].get("label", node_id), "score": round(score, 4)} for node_id, score in scored_nodes]
+    )
+
+
+def page_timeline() -> None:
+    st.title("Timeline")
+    dataset = select_dataset()
+    if dataset is None:
+        return
+
+    with get_session() as session:
+        events = EntityRepository(session).list_events(dataset.dataset_id)
+
+    if not events:
+        st.info("This dataset has no events.")
+        return
+
+    events_df = pd.DataFrame(
+        [{"event_id": e.event_id, "event_type": e.event_type, "date": e.date, "description": e.description} for e in events]
+    )
+    events_df["date"] = pd.to_datetime(events_df["date"])
+
+    col1, col2 = st.columns(2)
+    with col1:
+        event_types = st.multiselect("Filter by event type", sorted(events_df["event_type"].unique()), default=[])
+    with col2:
+        min_date, max_date = events_df["date"].min().date(), events_df["date"].max().date()
+        date_range = st.slider(
+            "Date range", min_value=min_date, max_value=max_date, value=(min_date, max_date)
+        )
+
+    filtered = events_df[
+        (events_df["date"].dt.date >= date_range[0]) & (events_df["date"].dt.date <= date_range[1])
+    ]
+    if event_types:
+        filtered = filtered[filtered["event_type"].isin(event_types)]
+
+    st.caption(f"Showing {len(filtered)} of {len(events_df)} events.")
+    fig = px.scatter(
+        filtered.sort_values("date"),
+        x="date",
+        y="event_type",
+        color="event_type",
+        hover_data=["description"],
+        title="Events over time",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    st.dataframe(filtered.sort_values("date"))
+
+
+def page_map() -> None:
+    st.title("Map")
+    dataset = select_dataset()
+    if dataset is None:
+        return
+
+    with get_session() as session:
+        repo = EntityRepository(session)
+        locations = repo.list_locations(dataset.dataset_id)
+        events = repo.list_events(dataset.dataset_id)
+
+    if not locations:
+        st.info("This dataset has no locations.")
+        return
+
+    event_counts: dict[str, int] = {}
+    for event in events:
+        if event.location_id:
+            event_counts[event.location_id] = event_counts.get(event.location_id, 0) + 1
+
+    locations_df = pd.DataFrame(
+        [
+            {
+                "location_id": loc.location_id,
+                "city": loc.city,
+                "country": loc.country,
+                "latitude": loc.latitude,
+                "longitude": loc.longitude,
+                "event_count": event_counts.get(loc.location_id, 0),
+            }
+            for loc in locations
+            if loc.latitude is not None and loc.longitude is not None
+        ]
+    )
+
+    if locations_df.empty:
+        st.info("No locations with coordinates to plot.")
+        return
+
+    locations_df["marker_size"] = locations_df["event_count"].clip(lower=1)
+    fig = px.scatter_geo(
+        locations_df,
+        lat="latitude",
+        lon="longitude",
+        size="marker_size",
+        hover_name="city",
+        hover_data={"country": True, "event_count": True, "marker_size": False},
+        title="Locations (marker size = number of events)",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    st.dataframe(locations_df.drop(columns=["marker_size"]).sort_values("event_count", ascending=False))
+
+
 def page_datasets() -> None:
     st.title("Datasets")
     with get_session() as session:
@@ -269,6 +533,12 @@ def main() -> None:
         page_load_synthetic()
     elif page == "Datasets":
         page_datasets()
+    elif page == "Graph Explorer":
+        page_graph_explorer()
+    elif page == "Timeline":
+        page_timeline()
+    elif page == "Map":
+        page_map()
 
 
 if __name__ == "__main__":

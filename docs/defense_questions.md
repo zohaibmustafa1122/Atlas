@@ -127,4 +127,70 @@ the graph layer makes cross-table relationships first-class.
 
 ---
 
-*(Further questions will be appended as Phases 3–9 are implemented.)*
+## Phase 3 questions
+
+**Q: Which edges actually exist in the graph, and why not more (e.g. LOCATED_IN for persons)?**
+A: The graph only contains edges backed by a real structural link in the
+relational schema: `WORKS_FOR` (from `persons.organization_id`),
+`OCCURRED_AT` (from `events.location_id`), one edge per row in
+`relationships` (using its `relationship_type`), and `TRANSFERRED_TO`
+(one per row in `transactions`). A `LOCATED_IN` edge from a person to a
+location was deliberately left out: `persons.city`/`country` are free-text
+strings, not foreign keys into `locations`, so matching them would mean
+string-matching two independently generated fields with no guarantee they
+refer to the same real-world place -- exactly the kind of unreliable
+inference the entity-resolution phase (Phase 4) is meant to handle
+carefully, not something to bake into the graph silently.
+
+**Q: Why is the graph a MultiDiGraph instead of a simple Graph?**
+A: Two reasons. It needs to be directed because some relationships have a
+real direction (`WORKS_FOR`, `TRANSFERRED_TO`). It needs to allow multiple
+edges between the same pair of nodes because two entities can be connected
+in more than one way at once -- e.g. two people who both `KNOWS` each other
+*and* have a `TRANSFERRED_TO` transaction between them. A simple `DiGraph`
+would silently collapse those into one edge and lose information.
+
+**Q: Betweenness centrality is exact for small graphs but "approximated" above 3,000 nodes -- what does that actually mean, and is it defensible?**
+A: Exact betweenness centrality requires computing shortest paths between
+every pair of nodes, which costs O(V x E) -- infeasible on an 8 GB CPU
+laptop once V reaches the tens of thousands. Above the threshold, ATLAS
+uses NetworkX's sampled betweenness: instead of using every node as a
+shortest-path source, it uses a fixed-size random sample (`k=500`, seeded
+for reproducibility) and scales the result. This is a standard, published
+approximation technique (Brandes' algorithm with sampling), not an ad hoc
+shortcut, and the UI explicitly labels the result as approximated rather
+than presenting it as exact.
+
+**Q: Why cap the Graph Explorer's visualization to a bounded neighborhood instead of showing the whole graph?**
+A: A dataset can have up to 100,000 entities. Rendering all of them in a
+single interactive vis.js graph would both exhaust available memory and
+be visually meaningless -- nobody can read a 100,000-node hairball. Instead,
+exploration always starts from a specific entity (found via search) and
+expands outward a bounded number of hops (`get_neighborhood`), capped at a
+maximum node count regardless of how many hops were requested. This
+mirrors how real investigative tools handle scale: start from something
+specific, expand deliberately.
+
+**Q: Why does community detection just return `None` on large graphs instead of also approximating?**
+A: Unlike betweenness centrality, there isn't a similarly standard,
+well-understood sampling approximation for modularity-based community
+detection that would fit cleanly into this project's scope. Rather than
+implementing a home-grown approximation whose accuracy couldn't be
+argued for confidently in a defense, the honest choice is to skip it
+above the size threshold and say so, rather than return a number that
+looks precise but wasn't validated.
+
+**Q: Why is `search_entities` a SQL query but `search_nodes` iterates the in-memory graph -- isn't that inconsistent?**
+A: They serve different situations. `EntityRepository.search_entities`
+runs a `LIKE` query directly against the database, which uses the indexed
+`name` columns and scales to 100,000 rows without loading anything into
+Python first -- this is what the dashboard actually uses. `search_nodes` in
+`app/graph/queries.py` operates on a graph already sitting in memory (e.g.
+during testing, or if a caller already has the graph loaded for another
+reason) and avoids a redundant database round-trip in that case. Having
+both isn't inconsistency; it's picking the right tool depending on
+whether the data is already in memory.
+
+---
+
+*(Further questions will be appended as Phases 4–9 are implemented.)*

@@ -4,9 +4,10 @@
 > heterogeneous datasets through entity resolution, graph analytics, and
 > anomaly detection. Built as a BS Data Science Final Year Project.
 
-**Status: Phase 2 — project setup, database, synthetic data generator,
-CSV/JSON/XLSX ingestion, cleaning/validation, Data Quality Engine,
-Streamlit dashboard.**
+**Status: Phase 3 — project setup, database, synthetic data generator,
+CSV/JSON/XLSX ingestion, cleaning/validation, Data Quality Engine, graph
+construction & analytics, Graph Explorer, Timeline, Map, Streamlit
+dashboard.**
 
 ---
 
@@ -40,7 +41,7 @@ resource-efficient approach holds up and where it doesn't).
 |---|---|
 | **1 (done)** | Project skeleton, relational schema, synthetic data generator, CSV/JSON/XLSX ingestion with dataset summaries, Streamlit MVP |
 | **2 (done)** | Data Quality Engine (completeness/uniqueness/validity/consistency), cleaning (whitespace, exact duplicates), schema validation |
-| 3 | Graph construction (NetworkX), centrality/PageRank/components, Graph Explorer, timeline, map |
+| **3 (done)** | Graph construction (NetworkX), degree/PageRank/betweenness centrality, connected components, community detection, shortest path, Graph Explorer (search + bounded expand + Pyvis viz), Timeline, Map |
 | 4 | Entity resolution (fuzzy matching, similarity scoring) |
 | 5 | Anomaly detection (Isolation Forest + statistical baselines) |
 | 6 | NLP entity extraction from free text |
@@ -61,8 +62,8 @@ CPU-only ML).
 - **Database:** SQLite (dev) → PostgreSQL (future, same ORM code)
 - **Data processing:** Pandas (Polars planned for hot paths)
 - **ML:** scikit-learn (Isolation Forest, Phase 5)
-- **Graph:** NetworkX (Phase 3), Neo4j-compatible interface for the future
-- **Visualization:** Streamlit, Plotly, Pyvis/Folium (later phases)
+- **Graph:** NetworkX, Neo4j-compatible interface for the future
+- **Visualization:** Streamlit, Plotly, Pyvis
 - **Testing:** Pytest
 
 ## 6. Installation
@@ -137,6 +138,12 @@ In the dashboard:
   completeness/uniqueness/validity/consistency breakdown). Optionally save
   the cleaned dataset's metadata and quality score to the database.
 - **Overview** / **Datasets** → see what's loaded.
+- **Graph Explorer** → pick a dataset, compute graph-wide metrics (degree/PageRank/betweenness
+  centrality, connected components, density, community detection), search for a person or
+  organization, expand its neighborhood a bounded number of hops with an interactive Pyvis
+  visualization, and find the shortest path between two entities.
+- **Timeline** → filter events by type and date range, see them on a scatter chart and in a table.
+- **Map** → see dataset locations on a world map, sized by number of events at each location.
 
 **4. Run the tests:**
 
@@ -182,7 +189,7 @@ Planned experiments (baseline vs. improved method, at 1,000 / 10,000 /
 - Performance: processing time, memory consumption, graph construction
   time, query response time.
 
-## 11. Limitations (current, Phase 2)
+## 11. Limitations (current, Phase 3)
 
 - The Data Quality Engine's "validity" and "consistency" checks are
   heuristics (see `docs/defense_questions.md`), not schema-verified —
@@ -190,8 +197,17 @@ Planned experiments (baseline vs. improved method, at 1,000 / 10,000 /
 - Cleaning is deliberately conservative: only exact duplicate rows and
   stray whitespace are touched. No imputation, typo correction, or
   type coercion happens automatically.
-- No graph construction, entity resolution, anomaly detection, NLP, or AI
-  assistant yet — those are Phases 3–7.
+- Graph edges only reflect links backed by an actual foreign key or
+  relationship/transaction row (`WORKS_FOR`, `OCCURRED_AT`, relationship
+  types, `TRANSFERRED_TO`) — no `LOCATED_IN` edges for persons, since that
+  would require string-matching free-text city/country fields with no
+  guarantee of correctness (a Phase 4 entity-resolution concern).
+- Betweenness centrality is exact below ~3,000 nodes and sampled
+  (approximated) above that; community detection is skipped above the
+  same threshold rather than approximated, since there's no similarly
+  well-understood sampling method for modularity maximization.
+- No entity resolution, anomaly detection, NLP, or AI assistant yet —
+  those are Phases 4–7.
 - Relationship/transaction referential integrity is enforced in the
   repository layer, not at the database schema level (documented
   trade-off, see `docs/database.md`).
